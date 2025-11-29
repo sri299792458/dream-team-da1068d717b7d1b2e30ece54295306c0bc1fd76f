@@ -5,13 +5,10 @@ Implements evolving agents with growing knowledge bases and mathematical state.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, TYPE_CHECKING
+from typing import List, Dict, Optional
 from datetime import datetime
 import json
 import numpy as np
-
-if TYPE_CHECKING:
-    from .team import Team
 
 
 @dataclass

@@ -16,8 +16,7 @@ from .meetings import TeamMeeting, IndividualMeeting
 from .evolution_agent import EvolutionAgent, EvolutionDecision
 from .research import get_research_assistant
 from .utils import save_json, load_json
-from .team import Team
-from .context import Reflection, ReflectionMemory
+from .context import ExecutionContext, ExperimentState, Reflection, ReflectionMemory
 
 
 class ExperimentOrchestrator:
