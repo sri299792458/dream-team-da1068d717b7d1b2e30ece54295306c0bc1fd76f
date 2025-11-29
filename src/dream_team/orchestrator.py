@@ -15,8 +15,8 @@ from .executor import CodeExecutor, extract_code_from_text
 from .meetings import TeamMeeting, IndividualMeeting
 from .evolution_agent import EvolutionAgent, EvolutionDecision
 from .research import get_research_assistant
-from .utils import save_json, load_json
-from .context import ExecutionContext, ExperimentState, Reflection, ReflectionMemory
+from .utils import save_json
+from .context import Reflection, ReflectionMemory
 from .event_store import EventStore
 from .analyzers import OutputAnalyzer, CodeAnalyzer
 from .semantic_state import IterationRecord
@@ -32,7 +32,7 @@ class ExperimentOrchestrator:
         team_members: List[Agent],
         coding_agent: Agent,
         results_dir: Path,
-        evolution_engine: Optional[Any] = None
+        evolution_engine: Optional[Any] = None,
     ):
         """
         Initialize orchestrator.
@@ -42,7 +42,7 @@ class ExperimentOrchestrator:
             team_members: Other agents on the team (strategists, domain experts)
             coding_agent: Dedicated agent who implements code based on team discussions
             results_dir: Directory to save results
-            evolution_engine: Engine for agent evolution
+            evolution_engine: Engine for agent evolution (unused for now)
         """
         self.team_lead = team_lead
         self.team_members = team_members  # Can be empty initially - PI recruits after bootstrap
@@ -51,9 +51,9 @@ class ExperimentOrchestrator:
         self.results_dir = Path(results_dir)
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
-        self.evolution_agent = None  # Will be initialized in run()
-        self.evolution_decision = None # Store decision between check and evolve steps
-        self.executor = None  # Created when run() is called
+        self.evolution_agent: Optional[EvolutionAgent] = None  # Will be initialized in run()
+        self.evolution_decision: Optional[EvolutionDecision] = None
+        self.executor: Optional[CodeExecutor] = None  # Created when run() is called
         self.research = get_research_assistant()
 
         # Get LLM for query generation and other tasks
@@ -61,37 +61,39 @@ class ExperimentOrchestrator:
         self.llm = get_llm()
 
         # === Layer 1: Event store ===
-        experiment_id = results_dir.name
+        experiment_id = self.results_dir.name
         self.event_store = EventStore(
             experiment_id=experiment_id,
-            storage_dir=self.results_dir / "events"
+            storage_dir=self.results_dir / "events",
         )
 
-        # === Layer 2: analyzers ===
+        # === Layer 2: analyzers (semantic state builders) ===
         self.output_analyzer = OutputAnalyzer(self.llm)
         self.code_analyzer = CodeAnalyzer(self.llm)
-
-        # Semantic state (Layer 2)
         self.iteration_records: List[IterationRecord] = []
-
-        # === Layer 3: Context builder ===
-        self.context_builder = ContextBuilder(
-            experiment_id=experiment_id,
-            reflection_memory=self.reflection_memory
-        )
-
-        self.iteration = 0
-        self.experiment_history = []
-        self.best_metric = None
-        self.bootstrap_completed = len(team_members) > 0  # Skip bootstrap if team already exists
-        self.column_schemas = {}  # Will be populated during bootstrap
 
         # Reflexion: Memory of past reflections for learning
         self.reflection_memory = ReflectionMemory()
 
-        # Mathematical framework for emergent evolution
-        # Mathematical framework for emergent evolution
-        # Handled by EvolutionAgent now
+        # === Layer 3: Context builder ===
+        self.context_builder = ContextBuilder(
+            experiment_id=experiment_id,
+            reflection_memory=self.reflection_memory,
+        )
+
+        self.iteration = 0
+        self.best_metric: Optional[float] = None
+        self.bootstrap_completed = len(team_members) > 0  # Skip bootstrap if team already exists
+        self.column_schemas: Dict[str, List[str]] = {}  # Will be populated during bootstrap
+
+        # These are set in run()
+        self.problem_statement: Optional[str] = None
+        self.target_metric: Optional[str] = None
+        self.minimize_metric: bool = True
+
+    # ======================================================================
+    # Main run loop
+    # ======================================================================
 
     def run(
         self,
@@ -101,7 +103,7 @@ class ExperimentOrchestrator:
         minimize_metric: bool = True,
         max_iterations: int = 5,
         target_score: Optional[float] = None,
-        resume: bool = True
+        resume: bool = True,
     ) -> Dict[str, Any]:
         """
         Run autonomous experimentation.
@@ -113,53 +115,48 @@ class ExperimentOrchestrator:
             minimize_metric: Whether lower is better
             max_iterations: Maximum iterations before stopping
             target_score: Optional target score to achieve
-            resume: Whether to resume from previous checkpoint (default: True)
+            resume: (currently ignored) placeholder for future resume-from-events
 
         Returns:
             Final experiment summary
         """
-        print("="*60)
+        print("=" * 60)
         print("🚀 AUTONOMOUS DREAM TEAM EXPERIMENT")
-        print("="*60)
+        print("=" * 60)
         print(f"\nProblem: {problem_statement[:100]}...")
         print(f"Target Metric: {target_metric} ({'minimize' if minimize_metric else 'maximize'})")
         print(f"Max Iterations: {max_iterations}")
-        if target_score:
+        if target_score is not None:
             print(f"Target Score: {target_score}")
         print()
 
         # Initialize executor with data
-        # Add artifacts_dir so agents can save important objects
-        artifacts_dir = self.results_dir / 'artifacts'
+        artifacts_dir = self.results_dir / "artifacts"
         artifacts_dir.mkdir(exist_ok=True)
         if data_context is None:
             data_context = {}
-        data_context['artifacts_dir'] = artifacts_dir
+        data_context["artifacts_dir"] = artifacts_dir
 
         self.executor = CodeExecutor(data_context=data_context)
 
-        # Store problem statement for use in prompts
+        # Store for prompts & evolution
         self.problem_statement = problem_statement
         self.target_metric = target_metric
         self.minimize_metric = minimize_metric
 
-        # Check for resume
+        # Resume: legacy JSON-based resume is gone; this is now a TODO for EventStore.
         start_iteration = 1
         if resume:
-            resumed = self._try_resume(problem_statement, target_metric, minimize_metric)
-            if resumed:
-                start_iteration = self.iteration + 1
-                print(f"\n✅ Resumed from iteration {self.iteration}")
-                print(f"   Best {target_metric} so far: {self.best_metric}")
-                print(f"   Starting iteration {start_iteration}\n")
-                # If resumed, bootstrap already completed
-                self.bootstrap_completed = True
+            print(
+                "📝 Resume from previous runs is not yet implemented with the new event-store "
+                "architecture. Starting fresh.\n"
+            )
 
         # Bootstrap phase: PI explores problem and recruits team
         if not self.bootstrap_completed:
             self._bootstrap_exploration(problem_statement)
             self.bootstrap_completed = True
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
 
         # Initialize evolution agent
         self._initialize_evolution_agent(problem_statement, target_metric, minimize_metric)
@@ -167,9 +164,9 @@ class ExperimentOrchestrator:
 
         # Main iteration loop
         for self.iteration in range(start_iteration, max_iterations + 1):
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"ITERATION {self.iteration}/{max_iterations}")
-            print(f"{'='*60}\n")
+            print(f"{'=' * 60}\n")
 
             # Step 1: Team meeting to discuss approach
             approach = self._team_planning_meeting(problem_statement)
@@ -180,36 +177,36 @@ class ExperimentOrchestrator:
             # Step 3: Execute code and get results (with automatic error recovery)
             results = self._execute_with_retry(implementation, approach, max_retries=2)
 
-            # Step 5: Evaluate performance
+            # Step 4: Extract metrics
             metrics = self._extract_metrics(results, target_metric)
 
-            # Log execution event
-            output_text = results.get('output', '') or ''
-            error_text = results.get('error')
-            traceback_text = results.get('traceback') or ""
+            # ---- Layer 1: log raw execution event ----
+            output_text = results.get("output", "") or ""
+            error_text = results.get("error")
+            traceback_text = results.get("traceback") or ""
 
             self.event_store.log_event(
                 kind="execution",
                 iteration=self.iteration,
                 agent=self.coding_agent.title,
                 payload={
-                    "success": results['success'],
+                    "success": results["success"],
                     "metrics": metrics,
+                    "description": results.get("description"),
                 },
                 large_data={
                     "output": output_text,
                     "code": implementation,
                     "traceback": traceback_text,
-                }
+                },
             )
 
             # ---- Layer 2: semantic analysis ----
             output_analysis = self.output_analyzer.analyze(
                 output=output_text,
                 error=error_text,
-                traceback=traceback_text
+                traceback=traceback_text,
             )
-
             code_analysis = self.code_analyzer.analyze(implementation)
 
             # Step 5.5: Reflexion - Reflect on iteration and extract learnings
@@ -218,7 +215,7 @@ class ExperimentOrchestrator:
                 approach=approach,
                 code=implementation,
                 results=results,
-                metrics=metrics
+                metrics=metrics,
             )
 
             # Log reflection event
@@ -227,27 +224,25 @@ class ExperimentOrchestrator:
                 iteration=self.iteration,
                 agent=self.team_lead.title,
                 payload={},
-                large_data={"reflection": reflection}
+                large_data={"reflection": reflection},
             )
 
             # Parse and store reflection
             reflection_obj = Reflection.from_text(self.iteration, reflection)
             self.reflection_memory.add_reflection(reflection_obj)
 
-            print(f"✓ Reflection recorded\n")
+            print("✓ Reflection recorded\n")
 
-            # Step 6: Record iteration
-            # Extract only serializable parts of results
+            # Step 6: Build IterationRecord (canonical semantic state)
             serializable_results = {
-                'success': results['success'],
-                'output': results['output'],
-                'error': results.get('error'),
-                'traceback': results.get('traceback'),
-                'code': results['code'],
-                'description': results['description']
+                "success": results["success"],
+                "output": results["output"],
+                "error": results.get("error"),
+                "traceback": results.get("traceback"),
+                "code": results["code"],
+                "description": results["description"],
             }
 
-            # Create IterationRecord
             iter_record = IterationRecord(
                 iteration=self.iteration,
                 approach=approach,
@@ -256,49 +251,42 @@ class ExperimentOrchestrator:
                 metrics=metrics,
                 output_analysis=output_analysis,
                 code_analysis=code_analysis,
-                reflection=reflection
+                reflection=reflection,
             )
 
             self.iteration_records.append(iter_record)
             self.context_builder.set_iterations(self.iteration_records)
-            
-            # Update agent knowledge
+
+            # Step 7: update agents' KnowledgeBases from semantic state
             self._update_agent_knowledge_from_iteration(
                 iter_record=iter_record,
                 target_metric=target_metric,
-                minimize=minimize_metric
+                minimize=minimize_metric,
             )
-            
-            # Refine concepts
+
+            # Refine concept depths based on techniques actually used
             if self.evolution_agent is not None:
                 self.evolution_agent.refine_concepts_from_code(
                     agent=self.coding_agent,
-                    techniques=code_analysis.techniques
+                    techniques=code_analysis.techniques,
                 )
 
+            # Optional: save a human-readable iteration summary for debugging
             iteration_summary = {
-                'iteration': self.iteration,
-                'approach': approach,
-                'results': serializable_results,
-                'metrics': metrics,
-                'agents_snapshot': [a.title for a in self.all_agents],
-                'reflection': reflection  # Include reflection in iteration history
+                "iteration": self.iteration,
+                "approach": approach,
+                "metrics": metrics,
+                "agents_snapshot": [a.title for a in self.all_agents],
             }
-            self.experiment_history.append(iteration_summary)
-
-            # Save iteration results
-            save_json(
-                iteration_summary,
-                self.results_dir / f'iteration_{self.iteration:02d}.json'
-            )
+            save_json(iteration_summary, self.results_dir / f"iteration_{self.iteration:02d}.json")
 
             # Update best metric BEFORE printing summary
             self._update_best_metric(metrics, target_metric, minimize_metric)
 
-            # Iteration summary
-            print(f"\n{'='*60}")
+            # Iteration summary (console)
+            print(f"\n{'=' * 60}")
             print(f"ITERATION {self.iteration} SUMMARY")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             print(f"Status: {'✅ Success' if results['success'] else '❌ Failed'}")
             if metrics:
                 for k, v in metrics.items():
@@ -307,36 +295,38 @@ class ExperimentOrchestrator:
                 print("No metrics extracted")
             if self.best_metric is not None:
                 print(f"Best {target_metric} so far: {self.best_metric:.4f}")
-            print(f"{'='*60}\n")
+            print(f"{'=' * 60}\n")
 
-            # Step 6: Check if target achieved
+            # Step 8: Check if goal achieved
             if self._check_goal_achieved(metrics, target_metric, target_score, minimize_metric):
                 print(f"\n🎯 Target achieved! {target_metric}: {metrics.get(target_metric)}")
                 break
 
-            # Step 7: Update dynamics and check if evolution needed
+            # Step 9: Evolution step
             should_evolve = self._check_mathematical_evolution(metrics, target_metric, minimize_metric)
-
             if should_evolve:
                 self._evolve_team(problem_statement, metrics)
 
         # Final summary
         final_summary = self._generate_final_summary()
-        save_json(final_summary, self.results_dir / 'final_summary.json')
-        
-        # Save event store (5-layer architecture)
-        if self.event_store:
-            event_store_path = self.event_store.save()
-            print(f"📦 Event store saved: {event_store_path}")
+        save_json(final_summary, self.results_dir / "final_summary.json")
 
-        print(f"\n{'='*60}")
+        # Persist event store (Layer 1 ground truth)
+        event_store_path = self.event_store.save()
+        print(f"📦 Event store saved: {event_store_path}")
+
+        print(f"\n{'=' * 60}")
         print("✅ EXPERIMENT COMPLETE")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"\nTotal Iterations: {self.iteration}")
         print(f"Best {target_metric}: {self.best_metric}")
         print(f"Results saved to: {self.results_dir}\n")
 
         return final_summary
+
+    # ======================================================================
+    # Bootstrap phase
+    # ======================================================================
 
     def _bootstrap_exploration(self, problem_statement: str):
         """
@@ -346,9 +336,9 @@ class ExperimentOrchestrator:
         sees what the problem is about, then decides what expertise is needed
         and recruits team members.
         """
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("BOOTSTRAP: PI Initial Exploration")
-        print("="*60)
+        print("=" * 60)
         print(f"\n{self.team_lead.title} is exploring the problem alone...\n")
 
         # PI decides what initial exploration is needed
@@ -371,14 +361,13 @@ In 2-3 sentences, describe what exploration code should be written.
 """
 
         meeting = IndividualMeeting(
-            save_dir=str(self.results_dir / 'meetings'),
-            research_api=self.research.ss_api if hasattr(self, 'research') else None
+            save_dir=str(self.results_dir / "meetings"),
+            research_api=self.research.ss_api if hasattr(self, "research") else None,
         )
         exploration_plan = meeting.run(
             agent=self.team_lead,
             task=exploration_task,
-            num_iterations=1
-            # research_api available - agent can search if they choose
+            num_iterations=1,
         )
 
         print(f"\n{self.team_lead.title}'s exploration plan:\n{exploration_plan}\n")
@@ -410,21 +399,20 @@ Output ONLY the Python code, wrapped in ```python code blocks.
 """
 
         code_meeting = IndividualMeeting(
-            save_dir=str(self.results_dir / 'meetings'),
-            research_api=self.research.ss_api if hasattr(self, 'research') else None
+            save_dir=str(self.results_dir / "meetings"),
+            research_api=self.research.ss_api if hasattr(self, "research") else None,
         )
         code_output = code_meeting.run(
             agent=self.coding_agent,
             task=code_task,
             num_iterations=1,
-            use_react_coding=True  # Coding agent uses ReAct for iterative reasoning
+            use_react_coding=True,
         )
-
 
         code = extract_code_from_text(code_output)
 
         # Save exploration code
-        code_file = self.results_dir / 'code' / 'iteration_00.py'
+        code_file = self.results_dir / "code" / "iteration_00.py"
         code_file.parent.mkdir(exist_ok=True)
         code_file.write_text(code)
 
@@ -433,31 +421,45 @@ Output ONLY the Python code, wrapped in ```python code blocks.
         results = self._execute_with_retry(
             code=code,
             approach=exploration_plan,
-            max_retries=2
+            max_retries=2,
         )
 
-        if results['success']:
+        # Log bootstrap execution as an event
+        self.event_store.log_event(
+            kind="execution",
+            iteration=0,
+            agent=self.coding_agent.title,
+            payload={
+                "phase": "bootstrap",
+                "success": results["success"],
+            },
+            large_data={
+                "output": results.get("output", "") or "",
+                "code": code,
+                "traceback": results.get("traceback") or "",
+            },
+        )
+
+        if results["success"]:
             print("✅ Exploration successful!\n")
             print("Output:")
             print("-" * 60)
-            print(results['output'])
+            print(results["output"])
             print("-" * 60)
 
             # Extract column schemas from explored dataframes
             print("\n📋 Extracting column schemas...")
             column_schemas = {}
-            for df_name in ['batches_train', 'batches_test', 'products', 'sites', 'regions']:
+            for df_name in ["batches_train", "batches_test", "products", "sites", "regions"]:
                 df = self.executor.get_variable(df_name)
-                if df is not None and hasattr(df, 'columns'):
+                if df is not None and hasattr(df, "columns"):
                     column_schemas[df_name] = list(df.columns)
                     print(f"   {df_name}: {len(df.columns)} columns - {list(df.columns)[:10]}...")
 
-            # Store schemas for use in team meetings
             self.column_schemas = column_schemas
         else:
             print("❌ Exploration failed after retries:")
-            print(results['error'])
-            # Continue anyway - PI can recruit based on problem statement
+            print(results["error"])
 
         # PI reviews results and recruits team using ReAct
         print(f"\n{self.team_lead.title} reviewing exploration results and recruiting team...\n")
@@ -482,23 +484,19 @@ Be specific about the skills needed based on what you learned from exploration a
 Format your response as a simple list, one team member per line.
 """
 
-        # Use ReAct so PI can search papers while thinking about recruitment
         recruitment_meeting = IndividualMeeting(
-            save_dir=str(self.results_dir / 'meetings'),
-            research_api=self.research.ss_api if hasattr(self, 'research') else None
+            save_dir=str(self.results_dir / "meetings"),
+            research_api=self.research.ss_api if hasattr(self, "research") else None,
         )
         recruitment_plan = recruitment_meeting.run(
             agent=self.team_lead,
             task=recruitment_task,
             num_iterations=1,
-            use_react=True  # PI uses ReAct to search papers during recruitment
+            use_react=True,
         )
 
         print(f"Recruitment plan:\n{recruitment_plan}\n")
 
-        # Parse and create team members from PI's plan
-        # For now, create ML Strategist as default (user can extend this)
-        # In future, could use LLM to parse and create custom agents
         recruited_agents = self._parse_and_recruit(recruitment_plan)
 
         self.team_members.extend(recruited_agents)
@@ -508,38 +506,38 @@ Format your response as a simple list, one team member per line.
         for agent in recruited_agents:
             print(f"   - {agent.title}")
 
-        # Save bootstrap results
-        # Use structure compatible with regular iterations so team can see bootstrap output
+        # Optional: Save bootstrap summary for human inspection
         bootstrap_summary = {
-            'iteration': 0,
-            'phase': 'bootstrap',
-            'approach': exploration_plan,  # What was planned
-            'results': {  # Match iteration structure so meeting code works
-                'success': results['success'],
-                'output': results['output'] if results['success'] else results.get('error', ''),
-                'error': results.get('error'),
-                'traceback': results.get('traceback'),
-                'code': code,
-                'description': 'Bootstrap exploration'
+            "iteration": 0,
+            "phase": "bootstrap",
+            "approach": exploration_plan,
+            "results": {
+                "success": results["success"],
+                "output": results["output"] if results["success"] else results.get("error", ""),
+                "error": results.get("error"),
+                "traceback": results.get("traceback"),
+                "code": code,
+                "description": "Bootstrap exploration",
             },
-            'metrics': {},  # No metrics in bootstrap, but include empty dict for consistency
-            'agents_snapshot': [self.team_lead.title, self.coding_agent.title],
-            'recruitment_plan': recruitment_plan,
-            'recruited_agents': [
+            "metrics": {},
+            "agents_snapshot": [self.team_lead.title, self.coding_agent.title],
+            "recruitment_plan": recruitment_plan,
+            "recruited_agents": [
                 {
-                    'title': a.title,
-                    'expertise': a.expertise,
-                    'role': a.role,
-                    'goal': a.goal
+                    "title": a.title,
+                    "expertise": a.expertise,
+                    "role": a.role,
+                    "goal": a.goal,
                 }
                 for a in recruited_agents
-            ]
+            ],
         }
+        save_json(bootstrap_summary, self.results_dir / "iteration_00_bootstrap.json")
 
-        # Add to experiment history so iteration 1 can see bootstrap output!
-        self.experiment_history.append(bootstrap_summary)
-
-        save_json(bootstrap_summary, self.results_dir / 'iteration_00_bootstrap.json')
+    # ======================================================================
+    # Recruitment parsing, team meeting, coding, execution, error fixing
+    # (unchanged in spirit, but now using ContextBuilder + no experiment_history)
+    # ======================================================================
 
     def _parse_and_recruit(self, recruitment_plan: str) -> List[Agent]:
         """
@@ -586,7 +584,7 @@ Only output the agent specifications, nothing else.
         agents = []
         current_agent = {}
 
-        for line in parsed_output.split('\n'):
+        for line in parsed_output.split('\\n'):
             line = line.strip()
 
             if line.startswith('Title:'):
@@ -623,13 +621,12 @@ Only output the agent specifications, nothing else.
         """Run team meeting to plan approach"""
         print("👥 Team planning meeting...\n")
 
-        # Build centralized context
         base_context = self.context_builder.for_team_meeting(
-            target_metric=self.target_metric
+            target_metric=self.target_metric,
         )
 
         columns_summary = ""
-        if hasattr(self, 'column_schemas') and self.column_schemas:
+        if self.column_schemas:
             columns_summary = "\n## AVAILABLE COLUMNS (use EXACT column names):\n"
             for df_name, cols in self.column_schemas.items():
                 columns_summary += f"\n{df_name}: {cols}\n"
@@ -652,29 +649,26 @@ Only output the agent specifications, nothing else.
 """
 
         meeting = TeamMeeting(
-            save_dir=str(self.results_dir / 'meetings'),
-            research_api=self.research.ss_api if hasattr(self, 'research') else None
+            save_dir=str(self.results_dir / "meetings"),
+            research_api=self.research.ss_api if hasattr(self, "research") else None,
         )
         summary = meeting.run(
             team_lead=self.team_lead,
             team_members=self.team_members,
             agenda=agenda,
-            num_rounds=1
+            num_rounds=1,
         )
 
-        meeting.save(f'iteration_{self.iteration:02d}_team_meeting.json')
+        meeting.save(f"iteration_{self.iteration:02d}_team_meeting.json")
 
         self.event_store.log_event(
             kind="meeting",
             iteration=self.iteration,
             agent=self.team_lead.title,
-            payload={"type": "team"}
+            payload={"type": "team"},
         )
 
-        # meeting.run returns dict; you want the 'summary' string
         return summary.get("summary", summary)
-
-
 
     def _implement_approach(self, approach: str) -> str:
         """Have coding agent write code to implement the approach"""
@@ -873,6 +867,10 @@ Output ONLY the FIXED Python code in ```python``` blocks.
 
         return fixed_code
 
+    # ======================================================================
+    # Metrics, reflection, evolution, summary
+    # ======================================================================
+
     def _format_column_schemas(self) -> str:
         """Format column schemas for display in prompts"""
         if not hasattr(self, 'column_schemas') or not self.column_schemas:
@@ -917,47 +915,12 @@ Output ONLY the FIXED Python code in ```python``` blocks.
 
         return metrics
 
-    def _summarize_output(self, output: str, max_words: int = 500) -> str:
-        """
-        Summarize execution output using LLM instead of truncation.
-
-        TreeSearch pattern: Don't truncate raw text - use LLM to compress
-        while preserving semantic meaning.
-
-        Args:
-            output: Full execution output
-            max_words: Target summary length
-
-        Returns:
-            Summarized output or original if short enough
-        """
-        # If output is short enough, keep as-is
-        if len(output) < 3000:
-            return output
-
-        prompt = f"""Summarize this execution output for the research team.
-
-Output:
-{output}
-
-Extract and summarize:
-1. What executed successfully
-2. Any errors or warnings
-3. Key metrics or results
-4. Important patterns or trends in the output
-
-Keep under {max_words} words. Be specific and preserve key information.
-"""
-
-        summary = self.llm.generate(prompt, temperature=0.2)
-        return summary
-
     def _reflect_on_iteration(
         self,
         approach: str,
         code: str,
         results: Dict[str, Any],
-        metrics: Dict[str, float]
+        metrics: Dict[str, float],
     ) -> str:
         """
         Generate self-reflection on iteration (Reflexion: Shinn et al.)
@@ -1042,7 +1005,7 @@ Format your response with these exact section headers:
         metrics: Dict[str, float],
         target_metric: str,
         target_score: Optional[float],
-        minimize: bool
+        minimize: bool,
     ) -> bool:
         """Check if target score achieved"""
         if not target_score or target_metric not in metrics:
@@ -1055,14 +1018,11 @@ Format your response with these exact section headers:
         else:
             return current >= target_score
 
-
-
-
     def _update_best_metric(
         self,
         metrics: Dict[str, float],
         target_metric: str,
-        minimize: bool
+        minimize: bool,
     ):
         """Update best metric seen so far"""
         if target_metric not in metrics:
@@ -1079,125 +1039,23 @@ Format your response with these exact section headers:
             self.best_metric = current
             print(f"\n✨ New best {target_metric}: {current:.4f}")
 
-    def _try_resume(self, problem_statement: str, target_metric: str, minimize: bool) -> bool:
-        """
-        Try to resume from previous experiment.
-
-        Returns: True if resumed, False if starting fresh
-        """
-        # Check if there are any iteration files
-        iteration_files = sorted(self.results_dir.glob('iteration_*.json'))
-
-        if not iteration_files:
-            print("📝 No previous experiment found. Starting fresh.\n")
-            return False
-
-        print(f"🔄 Found previous experiment with {len(iteration_files)} iterations")
-        print("   Resuming from checkpoint...\n")
-
-        # Load all iteration summaries
-        for iter_file in iteration_files:
-            iteration_data = load_json(iter_file)
-            self.experiment_history.append(iteration_data)
-
-            # Update iteration counter
-            self.iteration = iteration_data['iteration']
-
-            # Update best metric
-            if 'metrics' in iteration_data and target_metric in iteration_data['metrics']:
-                metric_value = iteration_data['metrics'][target_metric]
-                if self.best_metric is None:
-                    self.best_metric = metric_value
-                elif minimize and metric_value < self.best_metric:
-                    self.best_metric = metric_value
-                elif not minimize and metric_value > self.best_metric:
-                    self.best_metric = metric_value
-
-        # Re-execute all code to rebuild executor state
-        print("   Rebuilding execution context...")
-        code_files = sorted(self.results_dir.glob('code/iteration_*.py'))
-
-        for code_file in code_files:
-            iter_num = int(code_file.stem.split('_')[-1])
-            code = code_file.read_text()
-
-            print(f"   Re-executing iteration {iter_num}...")
-            result = self.executor.execute(
-                code=code,
-                description=f"Resume: Iteration {iter_num}"
-            )
-
-            if not result['success']:
-                print(f"   ⚠️  Warning: Iteration {iter_num} failed on re-execution")
-                print(f"   Error: {result['error']}")
-                # Continue anyway - maybe environment changed
-
-        # Reconstruct team composition from bootstrap
-        # Check if iteration 0 (bootstrap) has recruited_agents
-        bootstrap_data = next((item for item in self.experiment_history if item.get('iteration') == 0), None)
-        if bootstrap_data and 'recruited_agents' in bootstrap_data:
-            print("   Reconstructing team from bootstrap...")
-            from .agent import Agent
-            recruited_agents = bootstrap_data['recruited_agents']
-
-            # Recreate Agent objects
-            for agent_data in recruited_agents:
-                agent = Agent(
-                    title=agent_data['title'],
-                    expertise=agent_data['expertise'],
-                    role=agent_data.get('role', ''),
-                    goal=agent_data.get('goal', '')
-                )
-                self.team_members.append(agent)
-                print(f"   Restored: {agent.title}")
-
-            # Update all_agents
-            self.all_agents = [self.team_lead] + self.team_members
-            print(f"   ✅ Restored {len(recruited_agents)} team member(s)\n")
-
-        # Load agent states
-        agent_files = sorted(self.results_dir.glob('agents/*.json'))
-        if agent_files:
-            # Load most recent agent states
-            latest_agents = {}
-            for agent_file in agent_files:
-                # Parse filename to get agent name and iteration
-                parts = agent_file.stem.rsplit('_iter_', 1)
-                if len(parts) == 2:
-                    agent_name = parts[0]
-                    iter_num = int(parts[1])
-
-                    if agent_name not in latest_agents or iter_num > latest_agents[agent_name][1]:
-                        latest_agents[agent_name] = (agent_file, iter_num)
-
-            # Load the latest version of each agent
-            for agent_name, (agent_file, iter_num) in latest_agents.items():
-                # Find matching agent in team
-                for agent in self.all_agents:
-                    if agent.title.lower().replace(" ", "_") == agent_name:
-                        agent.load(agent_file)
-                        print(f"   Loaded {agent.title} (iteration {iter_num})")
-                        break
-
-        print(f"\n   ✅ Successfully resumed from iteration {self.iteration}")
-
-        return True
-
     def _generate_final_summary(self) -> Dict[str, Any]:
-        """Generate final experiment summary"""
+        """Generate final experiment summary based on semantic state"""
         return {
-            'total_iterations': self.iteration,
-            'best_metric': self.best_metric,
-            'final_team': [
+            "total_iterations": self.iteration,
+            "best_metric": self.best_metric,
+            "final_team": [
                 {
-                    'title': a.title,
-                    'expertise': a.expertise,
-                    'specialization_depth': a.specialization_depth
+                    "title": a.title,
+                    "expertise": a.expertise,
+                    "specialization_depth": a.specialization_depth,
                 }
                 for a in self.all_agents
             ],
-            'iteration_history': self.experiment_history,
-            'execution_summary': self.executor.summary()
+            # Layer 2 semantic history
+            "iterations": [rec.to_dict() for rec in self.iteration_records],
+            # Executor-level summary from CodeExecutor
+            "execution_summary": self.executor.summary() if self.executor else {},
         }
 
     # ========== Evolution Methods ==========
@@ -1223,35 +1081,35 @@ Format your response with these exact section headers:
         self,
         metrics: Dict[str, float],
         target_metric: str,
-        minimize: bool
+        minimize: bool,
     ) -> bool:
-        """Check if evolution needed using EvolutionAgent"""
-        if len(self.experiment_history) < 2:
+        """Check if evolution is needed using EvolutionAgent"""
+        if self.evolution_agent is None:
             return False
 
-        # Get current metric value
         current_val = metrics.get(target_metric)
         if current_val is None:
             return False
-            
-        
-        # Record metric
+
+        # Record metric for this iteration (Layer 5 math state)
         self.evolution_agent.record_metric(current_val)
-        
-        # Take a step
+
         print("\n🧠 Evolution Agent analyzing team dynamics...")
         self.evolution_decision = self.evolution_agent.step()
         decision = self.evolution_decision
 
-        # Update ContextBuilder with coverage/gaps
+        # Update ContextBuilder with coverage/gaps for next prompts
         coverage, gaps = self.evolution_agent.get_coverage_and_gaps()
         self.context_builder.set_evolution_state(gaps=gaps, coverage=coverage)
 
-        decision = self.evolution_decision
         print(f"   Quality: {decision.quality:.2f}")
-        print(f"   Team size: {decision.debug_info.get('team_size', '?')} (min: {decision.debug_info.get('min_size', '?')}, max: {decision.debug_info.get('max_size', '?')})")
+        print(
+            f"   Team size: {decision.debug_info.get('team_size', '?')} "
+            f"(min: {decision.debug_info.get('min_size', '?')}, "
+            f"max: {decision.debug_info.get('max_size', '?')})"
+        )
         print(f"   Coverage gaps: {len(decision.debug_info.get('gaps', []))} concepts below threshold")
-        if decision.debug_info.get('gaps'):
+        if decision.debug_info.get("gaps"):
             print(f"      → {', '.join(decision.debug_info['gaps'][:5])}")
 
         if decision.new_agent_specs:
@@ -1266,11 +1124,11 @@ Format your response with these exact section headers:
                 print(f"      - {agent.title}")
 
         if not decision.new_agent_specs and not decision.agents_to_delete:
-            print(f"   ℹ️  No evolution needed:")
-            if decision.debug_info.get('note'):
+            print("   ℹ️  No evolution needed:")
+            if decision.debug_info.get("note"):
                 print(f"      → {decision.debug_info['note']}")
             else:
-                print(f"      → No coverage gaps and no weak overlap detected")
+                print("      → No coverage gaps and no weak overlap detected")
 
         return bool(decision.new_agent_specs or decision.agents_to_delete)
 
@@ -1350,12 +1208,12 @@ Format your response with these exact section headers:
             agent=None,
             payload=evolution_record
         )
-    
+
     def _update_agent_knowledge_from_iteration(
         self,
-        iter_record: 'IterationRecord',  # Forward reference since we import at runtime
+        iter_record: IterationRecord,
         target_metric: str,
-        minimize: bool
+        minimize: bool,
     ):
         """Update agent knowledge bases using structured methods from IterationRecord."""
         # Determine if this was an improvement

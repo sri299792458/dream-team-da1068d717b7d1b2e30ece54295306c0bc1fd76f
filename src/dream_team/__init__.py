@@ -17,6 +17,7 @@ from .meetings import TeamMeeting, IndividualMeeting
 from .executor import CodeExecutor, extract_code_from_text
 from .orchestrator import ExperimentOrchestrator
 from .utils import save_json, load_json, load_summaries
+from .serialization import RobustJSONEncoder, robust_dump, robust_dumps
 
 # 5-Layer Architecture Components
 from .event_store import EventStore, Event
