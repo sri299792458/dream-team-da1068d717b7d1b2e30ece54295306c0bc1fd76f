@@ -14,6 +14,7 @@ from .agent import Agent
 from .executor import CodeExecutor, extract_code_from_text
 from .meetings import TeamMeeting, IndividualMeeting
 from .evolution_agent import EvolutionAgent, EvolutionDecision
+from .evolution_policy import DefaultEvolutionPolicy, EvolutionPolicyConfig, AgentMeta
 from .research import get_research_assistant
 from .utils import save_json
 from .context import Reflection, ReflectionMemory
@@ -1071,12 +1072,67 @@ Format your response with these exact section headers:
     # ========== Evolution Methods ==========
 
     def _initialize_evolution_agent(self, problem_statement: str, target_metric: str, minimize_metric: bool):
-        """Initialize the evolution agent"""
-        print("\n🧬 Initializing Evolution Agent...")
+        """Initialize the evolution agent with policy."""
+        print("\n🧬 Initializing Evolution Agent with Policy...")
         
+        # Create policy config
+        config = EvolutionPolicyConfig(
+            min_per_role={"lead": 1, "coder": 1},
+            max_team_size=6,
+            min_team_size=3,
+            gap_threshold=0.3,
+            max_concepts_per_new_agent=3
+        )
+        
+        policy = DefaultEvolutionPolicy(config)
+        
+        # Register core agents
+        # PI / Lead
+        policy.register_agent(
+            self.team_lead,
+            AgentMeta(
+                id=self.team_lead.title,
+                title=self.team_lead.title,
+                role="lead",
+                core=True,
+                tags=["leadership", "planning", "synthesis"]
+            )
+        )
+        
+        # Coder
+        policy.register_agent(
+            self.coding_agent,
+            AgentMeta(
+                id=self.coding_agent.title,
+                title=self.coding_agent.title,
+                role="coder",
+                core=True,
+                tags=["python", "implementation", "debugging"]
+            )
+        )
+        
+        # Register initial team members
+        for agent in self.team_members:
+            # Infer tags from expertise string
+            tags = [t.strip() for t in agent.expertise.split(',')]
+            policy.register_agent(
+                agent,
+                AgentMeta(
+                    id=agent.title,
+                    title=agent.title,
+                    role="member",  # Generic role for now
+                    core=False,
+                    tags=tags
+                )
+            )
+
         self.evolution_agent = EvolutionAgent(
             llm=self.llm,
-            target_team_size=(3, 6) # Default constraint
+            target_team_size=(3, 6),
+            gap_threshold=0.3,
+            specialize_overlap_threshold=0.4,
+            specialize_gini_threshold=0.5,
+            policy=policy
         )
         
         self.evolution_agent.initialize(

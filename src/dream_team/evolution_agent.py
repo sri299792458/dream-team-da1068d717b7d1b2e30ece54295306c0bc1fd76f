@@ -8,9 +8,9 @@ Single, simple math-driven evolution agent for a multi-agent "dream team".
 - Updates δ_i(v) with a logistic learning rule based on metric improvement.
 - Computes per-agent problem overlap Ω_i(P).
 - Each iteration, proposes:
-    - which agent to DELETE (weakest overlap)
+    - which agent to DELETE (weakest overlap + uniqueness check via policy)
     - a SPECIALIST child based on a strong-but-generalist agent
-    - a GAP expert based on under-covered concepts
+    - a GAP expert based on under-covered concepts (routed to best owner)
 
 The orchestrator is responsible for:
   - actually deleting old agents and creating new ones using NewAgentSpec
@@ -21,6 +21,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional, Iterable, Tuple
 import math
+
+from .evolution_policy import EvolutionPolicy, DefaultEvolutionPolicy, EvolutionPolicyConfig, AgentMeta
 
 EPS = 1e-12
 
@@ -223,11 +225,76 @@ class TeamMathState:
                 coverage[c] = max(coverage[c], s.depths.get(c, 0.0))
         return coverage
 
-    def select_weakest_agent(self) -> Optional[AgentMathState]:
-        """Agent with lowest Ω_i(P)."""
+    def compute_uniqueness(self) -> Dict[str, float]:
+        """
+        Compute uniqueness contribution for each agent.
+        unique_i = Σ_v w_P(v) * max(δ_i(v) - second_best(v), 0)
+        """
+        uniqueness = {}
+        
+        # Precompute second best depth for each concept
+        second_best_depths = {}
+        for v in self.problem.concepts():
+            all_depths = sorted([s.depths.get(v, 0.0) for s in self.agent_states.values()], reverse=True)
+            if len(all_depths) > 1:
+                second_best_depths[v] = all_depths[1]
+            else:
+                second_best_depths[v] = 0.0
+        
+        for key, state in self.agent_states.items():
+            u = 0.0
+            for v, w in self.problem.concept_weights.items():
+                d = state.depths.get(v, 0.0)
+                sb = second_best_depths.get(v, 0.0)
+                u += w * max(0.0, d - sb)
+            uniqueness[key] = u
+            
+        # Normalize uniqueness to 0-1 range for easier scoring
+        max_u = max(uniqueness.values()) if uniqueness else 1.0
+        if max_u > 0:
+            for k in uniqueness:
+                uniqueness[k] /= max_u
+                
+        return uniqueness
+
+    def select_weakest_agent(self, policy: EvolutionPolicy) -> Optional[AgentMathState]:
+        """
+        Select weakest agent based on policy (overlap + uniqueness + constraints).
+        """
         if not self.agent_states:
             return None
-        return min(self.agent_states.values(), key=lambda s: s.problem_overlap(self.problem))
+            
+        uniqueness = self.compute_uniqueness()
+        team_metas = policy.get_all_metas()
+        
+        candidates = []
+        for key, state in self.agent_states.items():
+            meta = policy.get_meta(state.agent_ref)
+            
+            # Check constraints
+            if not policy.can_delete(meta, team_metas):
+                continue
+                
+            overlap = state.problem_overlap(self.problem)
+            uniq = uniqueness.get(key, 0.0)
+            
+            # Simple load proxy: count concepts with depth > 0.4
+            load = sum(1 for d in state.depths.values() if d > 0.4)
+            
+            weakness = policy.compute_deletion_score(
+                agent_meta=meta,
+                overlap=overlap,
+                uniqueness=uniq,
+                load_penalty=load
+            )
+            candidates.append((weakness, state))
+            
+        if not candidates:
+            return None
+            
+        # Highest weakness score is the best candidate for deletion
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return candidates[0][1]
 
     def select_strong_generalist(
         self,
@@ -302,11 +369,12 @@ class EvolutionAgent:
         self,
         llm: Any,
         target_team_size: Tuple[int, int] = (3, 6),
-        gap_threshold: float = 0.3,  # Raised from 0.2 - easier to find gaps
-        specialize_overlap_threshold: float = 0.4,  # Lowered from 0.6 - easier to specialize
-        specialize_gini_threshold: float = 0.5,  # Raised from 0.3 - broader candidates
+        gap_threshold: float = 0.3,
+        specialize_overlap_threshold: float = 0.4,
+        specialize_gini_threshold: float = 0.5,
         alpha: float = 0.5,
         beta: float = 0.1,
+        policy: Optional[EvolutionPolicy] = None,
     ):
         self.llm = llm
         self.target_team_size = target_team_size
@@ -315,6 +383,19 @@ class EvolutionAgent:
         self.specialize_gini_threshold = specialize_gini_threshold
         self.alpha = alpha
         self.beta = beta
+        
+        # Initialize policy with default config if not provided
+        if policy is None:
+            config = EvolutionPolicyConfig(
+                min_per_role={},
+                max_team_size=target_team_size[1],
+                min_team_size=target_team_size[0],
+                gap_threshold=gap_threshold
+            )
+            self.policy = DefaultEvolutionPolicy(config)
+        else:
+            self.policy = policy
+            
         self.team_state: Optional[TeamMathState] = None
 
     # ----- LLM concept extraction -----
@@ -514,7 +595,7 @@ Rules:
         # 3) deletion candidate: weakest overlap (only if we're above min size)
         agents_to_delete: List[Any] = []
         if current_size > min_size:
-            weakest_state = self.team_state.select_weakest_agent()
+            weakest_state = self.team_state.select_weakest_agent(self.policy)
             if weakest_state is not None:
                 agents_to_delete.append(weakest_state.agent_ref)
 
@@ -549,29 +630,50 @@ Rules:
                     )
                 )
 
-            # 4b) gap-based new agent
+            # 4b) gap-based new agent (using policy routing)
             if gaps:
-                sorted_gaps = sorted(
-                    gaps,
-                    key=lambda c: problem.concept_weights.get(c, 0.0),
-                    reverse=True,
-                )
-                focus = sorted_gaps[:5]
-                title = "Gap-Focused Domain Expert"
-                expertise = (
-                    "Domain expert created to cover currently under-served concepts: "
-                    + ", ".join(focus)
-                )
-                role = "Introduce methods, theories, and domain knowledge centered on these under-covered concepts."
-                new_specs.append(
-                    NewAgentSpec(
-                        kind="gap",
-                        title=title,
-                        expertise=expertise,
-                        role=role,
-                        focus_concepts=focus,
+                assignments, orphans = self._assign_gaps_to_owners(gaps)
+                
+                # For each owner, create specialists or boost existing
+                for owner_key, concepts in assignments.items():
+                    owner_state = self.team_state.agent_states[owner_key]
+                    owner_meta = self.policy.get_meta(owner_state.agent_ref)
+                    
+                    groups = self._group_concepts(concepts, self.policy.config.max_concepts_per_new_agent)
+                    
+                    for group in groups:
+                        title = f"{owner_meta.title} ({', '.join(group)}) Specialist"
+                        expertise = f"Specialist focusing on: {', '.join(group)}"
+                        role = "Provide deep, focused expertise on these concepts."
+                        new_specs.append(NewAgentSpec(
+                            kind="specialize_gap",
+                            title=title,
+                            expertise=expertise,
+                            role=role,
+                            focus_concepts=group
+                        ))
+                
+                # For orphan concepts, create small gap agents
+                if orphans:
+                    # Sort by importance
+                    sorted_orphans = sorted(
+                        orphans, 
+                        key=lambda c: problem.concept_weights.get(c, 0.0), 
+                        reverse=True
                     )
-                )
+                    groups = self._group_concepts(sorted_orphans, self.policy.config.max_concepts_per_new_agent)
+                    
+                    for group in groups:
+                        title = f"Gap Specialist ({', '.join(group)})"
+                        expertise = "Domain expert created to cover under-served concepts: " + ", ".join(group)
+                        role = "Introduce methods and knowledge centered on these concepts."
+                        new_specs.append(NewAgentSpec(
+                            kind="gap",
+                            title=title,
+                            expertise=expertise,
+                            role=role,
+                            focus_concepts=group
+                        ))
 
         debug = {
             "quality": quality,
@@ -588,6 +690,58 @@ Rules:
             new_agent_specs=new_specs,
             debug_info=debug,
         )
+    
+    def _assign_gaps_to_owners(self, gaps: List[str]) -> Tuple[Dict[str, List[str]], List[str]]:
+        """
+        Assign gap concepts to existing agents who are best suited to own them.
+        Returns:
+            assignments: {agent_key: [concepts]}
+            orphans: [concepts] (no suitable owner found)
+        """
+        assignments: Dict[str, List[str]] = {}
+        orphans: List[str] = []
+        
+        if not self.team_state:
+            return {}, gaps
+            
+        for concept in gaps:
+            best_agent_key = None
+            best_score = -1.0
+            
+            for key, state in self.team_state.agent_states.items():
+                meta = self.policy.get_meta(state.agent_ref)
+                
+                # Count current high-focus concepts
+                current_focus = sum(1 for d in state.depths.values() if d > 0.4)
+                
+                score = self.policy.score_gap_owner(
+                    concept=concept,
+                    agent_meta=meta,
+                    depth=state.depths.get(concept, 0.0),
+                    current_focus_count=current_focus
+                )
+                
+                if score > best_score:
+                    best_score = score
+                    best_agent_key = key
+            
+            # Threshold for ownership (e.g. 0.2 means at least some relevance)
+            if best_agent_key and best_score > 0.2:
+                if best_agent_key not in assignments:
+                    assignments[best_agent_key] = []
+                assignments[best_agent_key].append(concept)
+            else:
+                orphans.append(concept)
+                
+        return assignments, orphans
+
+    def _group_concepts(self, concepts: List[str], max_per_group: int) -> List[List[str]]:
+        """Group concepts into chunks of max size."""
+        concepts = sorted(concepts)  # deterministic
+        groups = []
+        for i in range(0, len(concepts), max_per_group):
+            groups.append(concepts[i:i+max_per_group])
+        return groups
     
     # ----- Integration with 5-layer architecture -----
     
