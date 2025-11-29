@@ -588,6 +588,107 @@ Rules:
             new_agent_specs=new_specs,
             debug_info=debug,
         )
+    
+    # ----- Integration with 5-layer architecture -----
+    
+    def refine_concepts_from_code(self, agent: Any, techniques: List[str], boost: float = 0.1) -> None:
+        """
+        Refine agent concept depths based on techniques used in code.
+        
+        If a technique matches a concept, bump δ for that agent-concept pair.
+        This provides feedback from actual code execution to the mathematical model.
+        
+        Args:
+            agent: Agent whose depths to update
+            techniques: List of techniques from CodeAnalysis
+            boost: How much to boost matching concept depths (default: 0.1)
+        """
+        if self.team_state is None:
+            return
+        
+        agent_key = getattr(agent, "title", repr(agent))
+        if agent_key not in self.team_state.agent_states:
+            return
+        
+        agent_state = self.team_state.agent_states[agent_key]
+        
+        # Match techniques to concepts
+        for technique in techniques:
+            technique_lower = technique.lower().replace(" ", "_")
+            
+            for concept in agent_state.depths.keys():
+                # Check if technique matches concept
+                if technique_lower in concept or concept in technique_lower:
+                    # Boost this concept depth
+                    current_depth = agent_state.depths[concept]
+                    agent_state.depths[concept] = min(1.0, current_depth + boost)
+    
+    def get_coverage_and_gaps(self) -> Tuple[Dict[str, float], List[str]]:
+        """
+        Get team coverage and gaps for ContextBuilder integration.
+        
+        Returns:
+            Tuple of (coverage_dict, gaps_list)
+        """
+        if self.team_state is None:
+            return {}, []
+        
+        coverage = self.team_state.team_coverage()
+        gaps = [c for c, cov in coverage.items() if cov < self.gap_threshold]
+        
+        return coverage, gaps
+    
+    def seed_agent_knowledge(
+        self,
+        agent: Any,
+        iteration_records: List[Any],  # List[IterationRecord]
+        focus_concepts: List[str]
+    ) -> None:
+        """
+        Seed a newly created agent's knowledge base with relevant past learnings.
+        
+        Extracts techniques and patterns from past iterations that match the
+        agent's focus concepts.
+        
+        Args:
+            agent: Newly created agent
+            iteration_records: Past IterationRecords from the experiment
+            focus_concepts: Concepts this agent should focus on
+        """
+        if not iteration_records:
+            return
+        
+        kb = agent.knowledge_base
+        
+        # Extract relevant techniques from past iterations
+        relevant_techniques = set()
+        relevant_patterns = []
+        
+        for iter_rec in iteration_records:
+            # Check if any code techniques match focus concepts
+            for technique in iter_rec.code_analysis.techniques:
+                technique_lower = technique.lower().replace(" ", "_")
+                
+                for concept in focus_concepts:
+                    if technique_lower in concept or concept in technique_lower:
+                        relevant_techniques.add(technique)
+                        
+                        # If this iteration was successful, add as pattern
+                        if iter_rec.metrics and len(iter_rec.metrics) > 0:
+                            # Get any metric value as proxy for success
+                            metric_val = list(iter_rec.metrics.values())[0]
+                            if metric_val is not None:
+                                relevant_patterns.append(
+                                    f"Iter {iter_rec.iteration}: {technique} achieved {list(iter_rec.metrics.keys())[0]}={metric_val:.4f}"
+                                )
+        
+        # Populate agent KB
+        for tech in relevant_techniques:
+            kb.add_technique(tech)
+        
+        for pattern in relevant_patterns[-5:]:  # Last 5 relevant patterns
+            kb.successful_patterns.append(pattern)
+
 
     # ----- Serialization -----
 

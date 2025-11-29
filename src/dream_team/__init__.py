@@ -18,6 +18,12 @@ from .executor import CodeExecutor, extract_code_from_text
 from .orchestrator import ExperimentOrchestrator
 from .utils import save_json, load_json, load_summaries
 
+# 5-Layer Architecture Components
+from .event_store import EventStore, Event
+from .semantic_state import OutputAnalysis, CodeAnalysis, IterationRecord
+from .analyzers import OutputAnalyzer, CodeAnalyzer
+from .context_builder import ContextBuilder
+
 
 __version__ = "0.1.0"
 
@@ -43,4 +49,13 @@ __all__ = [
     "RobustJSONEncoder",
     "robust_dump",
     "robust_dumps",
+    # 5-Layer Architecture
+    "EventStore",
+    "Event",
+    "OutputAnalysis",
+    "CodeAnalysis",
+    "IterationRecord",
+    "OutputAnalyzer",
+    "CodeAnalyzer",
+    "ContextBuilder",
 ]

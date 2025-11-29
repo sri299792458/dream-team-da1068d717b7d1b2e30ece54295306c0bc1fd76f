@@ -230,6 +230,11 @@ class ExperimentOrchestrator:
         # Final summary
         final_summary = self._generate_final_summary()
         save_json(final_summary, self.results_dir / 'final_summary.json')
+        
+        # Save event store (5-layer architecture)
+        if self.event_store:
+            event_store_path = self.event_store.save()
+            print(f"📦 Event store saved: {event_store_path}")
 
         print(f"\n{'='*60}")
         print("✅ EXPERIMENT COMPLETE")
@@ -1414,4 +1419,74 @@ Format your response with these exact section headers:
             'new_team': [{'title': a.title, 'expertise': a.expertise} for a in self.all_agents]
         }
         save_json(evolution_record, self.results_dir / f'evolution_iter_{self.iteration}.json')
-
+    
+    def _update_agent_knowledge_from_iteration(
+        self,
+        iter_record: 'IterationRecord',  # Forward reference since we import at runtime
+        target_metric: str,
+        minimize: bool
+    ):
+        """Update agent knowledge bases using structured methods from IterationRecord."""
+        # Determine if this was an improvement
+        prev_metric = None
+        if len(self.iteration_records) > 1:
+            prev_iter = self.iteration_records[-2]
+            prev_metric = prev_iter.get_metric(target_metric)
+        
+        current_metric = iter_record.get_metric(target_metric)
+        
+        is_improvement = False
+        if prev_metric is not None and current_metric is not None:
+            is_improvement = (current_metric < prev_metric) if minimize else (current_metric > prev_metric)
+        
+        # Update all agents
+        for agent in self.all_agents:
+            # Add techniques from code analysis
+            for technique in iter_record.code_analysis.techniques:
+                agent.knowledge_base.add_technique(technique)
+            
+            # Track success/failure patterns
+            if is_improvement and current_metric is not None and prev_metric is not None:
+                improvement = abs(current_metric - prev_metric)
+                technique = iter_record.code_analysis.techniques[0] if iter_record.code_analysis.techniques else "approach"
+                agent.knowledge_base.add_success_pattern(
+                    iteration=iter_record.iteration,
+                    technique=technique,
+                    metric=target_metric,
+                    improvement=improvement
+                )
+            elif not is_improvement and prev_metric is not None:
+                technique = iter_record.code_analysis.techniques[0] if iter_record.code_analysis.techniques else "approach"
+                agent.knowledge_base.add_failure_pattern(
+                    iteration=iter_record.iteration,
+                    technique=technique,
+                    metric=target_metric,
+                    reason=iter_record.output_analysis.raw_summary
+                )
+            
+            # Track errors
+            for error in iter_record.output_analysis.errors:
+                error_type = "ExecutionError"
+                if "NameError" in error:
+                    error_type = "NameError"
+                elif "KeyError" in error:
+                    error_type = "KeyError"
+                elif "ValueError" in error:
+                    error_type = "ValueError"
+                
+                agent.knowledge_base.add_error_insight(
+                    iteration=iter_record.iteration,
+                    error_type=error_type,
+                    error_msg=error[:200]
+                )
+        
+        # Log KB update event
+        if self.event_store:
+            self.event_store.log_event(
+                kind="kb_update",
+                iteration=iter_record.iteration,
+                payload={
+                    "techniques_added": iter_record.code_analysis.techniques,
+                    "is_improvement": is_improvement
+                }
+            )

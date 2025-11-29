@@ -63,6 +63,65 @@ class KnowledgeBase:
     def add_technique(self, technique: str):
         if technique not in self.techniques_mastered:
             self.techniques_mastered.append(technique)
+    
+    def add_success_pattern(self, iteration: int, technique: str, metric: str, improvement: float):
+        """Track successful pattern."""
+        pattern = f"Iter {iteration}: {technique} improved {metric} by {improvement:.4f}"
+        if pattern not in self.successful_patterns:
+            self.successful_patterns.append(pattern)
+    
+    def add_failure_pattern(self, iteration: int, technique: str, metric: str, reason: str):
+        """Track failure pattern."""
+        pattern = f"Iter {iteration}: {technique} failed on {metric} - {reason}"
+        if pattern not in self.error_insights:
+            self.error_insights.append(pattern)
+    
+    def add_error_insight(self, iteration: int, error_type: str, error_msg: str, solution: Optional[str] = None):
+        """Add error catalog entry."""
+        insight = f"Iter {iteration}: {error_type} - {error_msg}"
+        if solution:
+            insight += f" [Solution: {solution}]"
+        if insight not in self.error_insights:
+            self.error_insights.append(insight)
+    
+    def collect_for_intent(self, intent: str, max_items: int = 5) -> Dict[str, List[str]]:
+        """
+        Retrieve relevant knowledge for specific purpose.
+        
+        Args:
+            intent: Purpose of retrieval ("plan_next_iteration", "fix_error", "code_implementation")
+            max_items: Maximum items per category
+        
+        Returns:
+            Dictionary with categorized knowledge
+        """
+        result = {
+            "techniques": [],
+            "patterns": [],
+            "pitfalls": []
+        }
+        
+        if intent == "plan_next_iteration":
+            # Most recent successful patterns
+            result["patterns"] = self.successful_patterns[-max_items:]
+            # Known pitfalls to avoid
+            result["pitfalls"] = self.error_insights[-max_items:]
+            # Techniques mastered
+            result["techniques"] = self.techniques_mastered[-max_items:]
+        
+        elif intent == "code_implementation":
+            # Successful patterns for guidance
+            result["patterns"] = self.successful_patterns[-max_items:]
+            # Techniques to use
+            result["techniques"] = self.techniques_mastered[-max_items:]
+        
+        elif intent == "fix_error":
+            # Error insights and solutions
+            result["pitfalls"] = self.error_insights[-max_items:]
+            # Successful patterns that worked
+            result["patterns"] = self.successful_patterns[-max_items:]
+        
+        return result
 
     def to_dict(self):
         return {
@@ -72,39 +131,6 @@ class KnowledgeBase:
             "error_insights": self.error_insights,
             "successful_patterns": self.successful_patterns
         }
-
-    def to_prompt_context(self, max_papers: int = 5) -> str:
-        """Convert KB to string for LLM context"""
-        parts = []
-
-        if self.domain_facts:
-            parts.append("## Domain Knowledge:")
-            parts.extend([f"- {fact}" for fact in self.domain_facts[:10]])
-
-        if self.papers:
-            parts.append("\n## Research Papers:")
-            for paper in self.papers[:max_papers]:
-                parts.append(f"- {paper.title} ({paper.year})")
-                if paper.key_findings:
-                    parts.extend([f"  * {finding}" for finding in paper.key_findings])
-                elif paper.abstract:
-                    # Show abstract excerpt if no key_findings available
-                    abstract_excerpt = paper.abstract[:200] + "..." if len(paper.abstract) > 200 else paper.abstract
-                    parts.append(f"  Abstract: {abstract_excerpt}")
-
-        if self.techniques_mastered:
-            parts.append("\n## Techniques Mastered:")
-            parts.extend([f"- {tech}" for tech in self.techniques_mastered])
-
-        if self.successful_patterns:
-            parts.append("\n## What Has Worked:")
-            parts.extend([f"- {pattern}" for pattern in self.successful_patterns[-5:]])
-
-        if self.error_insights:
-            parts.append("\n## Known Issues:")
-            parts.extend([f"- {insight}" for insight in self.error_insights[-5:]])
-
-        return "\n".join(parts) if parts else "No knowledge accumulated yet."
 
 
 @dataclass
@@ -155,7 +181,12 @@ class Agent:
 
     @property
     def prompt(self) -> str:
-        """Generate system prompt incorporating knowledge base"""
+        """
+        Generate system prompt WITHOUT knowledge base injection.
+        
+        Knowledge base is now provided separately by ContextBuilder.
+        This keeps the base prompt stable and context dynamic.
+        """
         # Role-specific closing to activate relevant expertise
         if "Principal Investigator" in self.title or "Lead" in self.title:
             closing = """You are part of a research team solving data science challenges.
@@ -173,8 +204,6 @@ Expertise: {self.expertise}
 Goal: {self.goal}
 
 Role: {self.role}
-
-{self.knowledge_base.to_prompt_context()}
 
 {closing}"""
 

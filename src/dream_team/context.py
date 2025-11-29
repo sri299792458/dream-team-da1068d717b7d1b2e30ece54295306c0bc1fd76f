@@ -8,7 +8,11 @@ Implements Reflexion-based learning (Shinn et al.):
 """
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
+
+# Note: ExperimentState will be enhanced in orchestrator.py
+# to include IterationRecord and EventStore references
+
 
 
 @dataclass
