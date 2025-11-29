@@ -553,57 +553,53 @@ Parse this recruitment plan and extract agent specifications.
 {recruitment_plan}
 
 ## Your Task:
-For each team member mentioned, extract:
+Extract the team members mentioned in the plan.
+For each, provide:
 - Title
 - Expertise
 - Role
 
-Output in this exact format (one agent per block):
-
-AGENT 1:
-Title: [exact title from plan]
-Expertise: [expertise description from plan]
-Role: [role description from plan]
-
-AGENT 2:
-Title: [exact title from plan]
-Expertise: [expertise description from plan]
-Role: [role description from plan]
-
-Only output the agent specifications, nothing else.
+Output ONLY a JSON list of objects, like this:
+[
+  {{
+    "title": "Agent Title",
+    "expertise": "Expertise description",
+    "role": "Role description"
+  }}
+]
 """
 
-        meeting = IndividualMeeting(save_dir=str(self.results_dir / 'meetings'))
-        parsed_output = meeting.run(
-            agent=self.team_lead,
-            task=parse_task,
-            num_iterations=1
-        )
+        try:
+            parsed_agents = self.llm.generate_json(parse_task, temperature=0.1)
+            # Handle case where LLM returns a dict instead of list (e.g. {"agents": [...]})
+            if isinstance(parsed_agents, dict):
+                if "agents" in parsed_agents:
+                    parsed_agents = parsed_agents["agents"]
+                else:
+                    # Try to find any list value
+                    for val in parsed_agents.values():
+                        if isinstance(val, list):
+                            parsed_agents = val
+                            break
+            
+            if not isinstance(parsed_agents, list):
+                parsed_agents = []
 
-        # Parse the structured output and create Agent objects
+        except Exception as e:
+            print(f"   ⚠️  Parsing failed: {e}")
+            parsed_agents = []
+
+        # Create Agent objects
         agents = []
-        current_agent = {}
-
-        for line in parsed_output.split('\\n'):
-            line = line.strip()
-
-            if line.startswith('Title:'):
-                current_agent['title'] = line.replace('Title:', '').strip()
-            elif line.startswith('Expertise:'):
-                current_agent['expertise'] = line.replace('Expertise:', '').strip()
-            elif line.startswith('Role:'):
-                current_agent['role'] = line.replace('Role:', '').strip()
-
-                # When we have all three fields, create agent
-                if 'title' in current_agent and 'expertise' in current_agent and 'role' in current_agent:
-                    agent = Agent(
-                        title=current_agent['title'],
-                        expertise=current_agent['expertise'],
-                        goal=f"contribute specialized expertise to optimize the target metric",
-                        role=current_agent['role']
-                    )
-                    agents.append(agent)
-                    current_agent = {}  # Reset for next agent
+        for agent_data in parsed_agents:
+            if isinstance(agent_data, dict) and "title" in agent_data and "expertise" in agent_data:
+                agent = Agent(
+                    title=agent_data.get("title", "Specialist"),
+                    expertise=agent_data.get("expertise", "General expertise"),
+                    goal=f"contribute specialized expertise to optimize the target metric",
+                    role=agent_data.get("role", "Contribute to team success")
+                )
+                agents.append(agent)
 
         # Fallback: if parsing failed, create a generic ML specialist
         if not agents:
