@@ -465,34 +465,6 @@ Rules:
 
         self.team_state.agent_states = new_states
 
-    def sync_state_to_agents(self, agents: List[Any]) -> None:
-        """
-        Sync internal math state (δ, θ) back to the agent objects.
-        This ensures agent prompts reflect the 'true' state tracked here.
-        """
-        if self.team_state is None:
-            return
-
-        for agent in agents:
-            key = getattr(agent, "title", repr(agent))
-            if key in self.team_state.agent_states:
-                math_state = self.team_state.agent_states[key]
-                
-                # We assume agents have .δ and .θ attributes (Agent class in core.py)
-                if hasattr(agent, "δ") and hasattr(agent, "θ"):
-                    # Update depths
-                    for concept, depth in math_state.depths.items():
-                        agent.δ[concept] = depth
-                    
-                    # Update attention
-                    for concept, att in math_state.attention.items():
-                        agent.θ[concept] = att
-                    
-                    # Also ensure concepts exist in agent's knowledge graph
-                    if hasattr(agent, "K"):
-                        for concept in math_state.depths.keys():
-                            if concept not in agent.K.concepts:
-                                agent.K.add_concept(concept)
 
     # ----- Per-iteration API -----
 

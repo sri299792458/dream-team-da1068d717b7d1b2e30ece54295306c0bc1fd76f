@@ -5,14 +5,10 @@ Implements evolving agents with growing knowledge bases and mathematical state.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Tuple, Set, TYPE_CHECKING
+from typing import List, Dict, Optional, TYPE_CHECKING
 from datetime import datetime
 import json
 import numpy as np
-from .knowledge_state import (
-    KnowledgeGraph, AttentionDistribution, DepthMap,
-    extract_concepts_from_text
-)
 
 if TYPE_CHECKING:
     from .team import Team
@@ -158,53 +154,11 @@ class Agent:
         self.experiments_proposed = 0
         self.successful_contributions = 0
 
-        # Mathematical state (NEW)
-        self.K = KnowledgeGraph()  # K_i(t)
-        self.θ = AttentionDistribution()  # θ_i(t)
-        self.δ = DepthMap()  # δ_i(v,t)
 
-        # Contribution tracking for information theory
-        self.contribution_history = {
-            'proposed': [],
-            'adopted': [],
-            'information_gains': []
-        }
-
-        # Initialize from expertise
-        self._initialize_from_expertise(expertise)
-
-    def _initialize_from_expertise(self, expertise: str):
-        """Extract initial concepts from expertise string"""
-        concepts = extract_concepts_from_text(expertise, use_llm=False)
-
-        if not concepts:
-            # Fallback: use title
-            concepts = {self.title.lower().replace(" ", "_")}
-
-        # Add to knowledge graph with shallow depth
-        for concept in concepts:
-            self.K.add_concept(concept)
-            self.δ[concept] = 0.3  # Initial shallow knowledge
-            self.θ[concept] = 1.0
-
-        self.θ.normalize()
 
     @property
     def prompt(self) -> str:
         """Generate system prompt incorporating knowledge base"""
-        # Get mathematical state summary
-        gini = self.δ.gini_coefficient()
-        max_depth = self.δ.max_depth()
-        top_concepts = self.δ.top_concepts(3)
-
-        math_state = ""
-        if top_concepts:
-            math_state = f"\n## Current Focus:\n"
-            math_state += f"Specialization level: {gini:.2f} (0=generalist, 1=specialist)\n"
-            math_state += f"Deep expertise ({max_depth:.2f}) in:\n"
-            for concept, depth in top_concepts:
-                math_state += f"- {concept} (depth: {depth:.2f})\n"
-
         # Role-specific closing to activate relevant expertise
         if "Principal Investigator" in self.title or "Lead" in self.title:
             closing = """You are part of a research team solving data science challenges.
@@ -223,8 +177,6 @@ Goal: {self.goal}
 
 Role: {self.role}
 
-{math_state}
-
 {self.knowledge_base.to_prompt_context()}
 
 {closing}"""
@@ -241,9 +193,9 @@ Role: {self.role}
             specialization_depth=self.specialization_depth,
             knowledge_base_summary=self.knowledge_base.to_dict(),
             trigger_reason=trigger_reason,
-            gini_coefficient=self.δ.gini_coefficient(),
-            max_depth=self.δ.max_depth(),
-            top_concepts=self.δ.top_concepts(3)
+            gini_coefficient=0.0,
+            max_depth=0.0,
+            top_concepts=[]
         )
 
     def save(self, filepath: str):
@@ -274,13 +226,7 @@ Role: {self.role}
                 "experiments_proposed": self.experiments_proposed,
                 "successful_contributions": self.successful_contributions
             },
-            "mathematical_state": {
-                "concepts": list(self.K.concepts),
-                "depths": self.δ.depths,
-                "attention": self.θ.distribution,
-                "gini": self.δ.gini_coefficient(),
-                "max_depth": self.δ.max_depth()
-            }
+
         }
 
         with open(filepath, 'w') as f:
@@ -322,20 +268,7 @@ Role: {self.role}
             )
             agent.knowledge_base.papers.append(paper)
 
-        # Restore mathematical state
-        math_state = state.get("mathematical_state", {})
-        if math_state:
-            for concept in math_state.get("concepts", []):
-                agent.K.add_concept(concept)
 
-            depths = math_state.get("depths", {})
-            for concept, depth in depths.items():
-                agent.δ[concept] = depth
-
-            attention = math_state.get("attention", {})
-            for concept, att in attention.items():
-                agent.θ[concept] = att
-            agent.θ.normalize()
 
         # Restore stats
         stats = state.get("stats", {})
@@ -345,74 +278,10 @@ Role: {self.role}
 
         return agent
 
-    # Information-theoretic methods
 
-    def compute_coverage(self, problem_graph: KnowledgeGraph) -> float:
-        """Ω_i(P,t) = simple overlap"""
-        return self.K.compute_overlap(problem_graph)
-
-    def compute_weighted_coverage(self, problem_graph: KnowledgeGraph) -> float:
-        """Weighted coverage using depth: Ω_i(P,t) = ∑δ_i(v)·w_P(v) / ∑w_P(v)"""
-        return self.K.compute_weighted_overlap(problem_graph, self.δ)
-
-    def estimate_information_gain(self, contribution: str, team_response: str = "") -> float:
-        """
-        Estimate I(c_i) = H(before) - H(after)
-
-        Simplified: based on adoption in team response
-        """
-        if not contribution.strip():
-            return 0.0
-
-        # Simple heuristic: check if ideas appear in team response
-        contribution_words = set(contribution.lower().split())
-        response_words = set(team_response.lower().split())
-
-        overlap = len(contribution_words & response_words)
-        total = len(contribution_words)
-
-        if total == 0:
-            return 0.0
-
-        # Information gain proportional to adoption
-        return min(1.0, overlap / total)
-
-    def contribution_effectiveness(self) -> float:
-        """What fraction of contributions were valuable?"""
-        if len(self.contribution_history['information_gains']) == 0:
-            return 0.5  # Neutral prior
-
-        return np.mean(self.contribution_history['information_gains'])
 
     # Knowledge integration
 
     def add_paper_to_knowledge(self, paper: Paper):
-        """Integrate paper into both traditional KB and mathematical graph"""
-        # Traditional KB
+        """Integrate paper into knowledge base"""
         self.knowledge_base.add_paper(paper)
-
-        # Extract concepts for mathematical graph
-        concepts = extract_concepts_from_text(
-            f"{paper.title} {' '.join(paper.key_findings)} {' '.join(paper.techniques)}",
-            use_llm=False
-        )
-
-        for concept in concepts:
-            if concept not in self.K.concepts:
-                self.K.add_concept(concept)
-                self.δ[concept] = 0.2  # Papers give shallow knowledge initially
-            else:
-                # Deepen existing knowledge
-                self.δ[concept] = min(1.0, self.δ[concept] + 0.15)
-
-            # Create edges between co-occurring concepts
-            for other_concept in concepts:
-                if concept != other_concept:
-                    self.K.add_edge(concept, other_concept, weight=0.5)
-
-    def record_contribution(self, contribution: str, adopted: bool, info_gain: float):
-        """Record contribution for tracking"""
-        self.contribution_history['proposed'].append(contribution)
-        if adopted:
-            self.contribution_history['adopted'].append(contribution)
-        self.contribution_history['information_gains'].append(info_gain)

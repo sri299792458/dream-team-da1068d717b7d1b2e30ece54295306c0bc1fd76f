@@ -1319,11 +1319,9 @@ Format your response with these exact section headers:
         if current_val is None:
             return False
             
+        
         # Record metric
         self.evolution_agent.record_metric(current_val)
-        
-        # Sync agent states (so prompts are updated)
-        self.evolution_agent.sync_state_to_agents(self.all_agents)
         
         # Take a step
         print("\n🧠 Evolution Agent analyzing team dynamics...")
