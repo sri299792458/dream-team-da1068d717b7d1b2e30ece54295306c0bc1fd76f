@@ -691,6 +691,11 @@ Implement the team's plan.
 - **CRITICAL: DO NOT generate dummy data. It will overwrite the real data.**
 - Just start using the variables directly.
 
+## XGBOOST NOTE:
+- Environment: XGBoost 3.1.1 with CUDA.
+- Do NOT use `tree_method="gpu_hist"` (it is invalid here).
+- If you use XGBRegressor, use `device="cuda"` and optionally `tree_method="hist"` or leave `tree_method` default.
+
 ## Requirements:
 - Use the EXACT column names from DataFrame Schemas above
 - Use GPU when training models
@@ -806,7 +811,6 @@ Output ONLY Python code in ```python``` blocks.
                 print(f"   Fixed code saved to: {code_file}\n")
 
             attempt += 1
-
         # Max retries exhausted, return last failed result
         print(f"   ⚠️ Max retries ({max_retries}) exhausted. Moving on with failure.\n")
         return result
@@ -834,6 +838,8 @@ Output ONLY Python code in ```python``` blocks.
             approach=approach
         )
 
+        preloaded_vars = list(self.executor.data_context.keys())
+
         task = f"""
 Your code failed with an error. Fix it.
 
@@ -841,7 +847,13 @@ Your code failed with an error. Fix it.
 
 ## Available in execution context:
 - Pre-imported libraries: pandas, numpy, torch, pathlib
-- Variables: {list(self.executor.data_context.keys())}
+- Variables: {preloaded_vars}
+
+## Constraints:
+- Keep using these existing dataframes; do NOT recreate or overwrite them with dummy data
+  (e.g. no "batches_train = pd.DataFrame(...)" or similar).
+- If the error involves XGBoost and `tree_method="gpu_hist"`, fix it by using `device="cuda"`
+  and/or a valid `tree_method` like `"hist"`, not by changing the data.
 
 ## Task:
 Read the traceback carefully and fix the specific lines that failed.
