@@ -950,7 +950,8 @@ Output ONLY the FIXED Python code in ```python blocks.
         code_output = meeting.run(
             agent=self.coding_agent,
             task=task,
-            num_iterations=1
+            num_iterations=1,
+            use_react_coding=True  # Bug fixing uses internal reasoning, not paper search
         )
 
         # Extract fixed code
