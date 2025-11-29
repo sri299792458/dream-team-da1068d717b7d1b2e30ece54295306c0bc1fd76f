@@ -684,17 +684,16 @@ Implement the team's plan.
 
 {impl_context}
 
-## Available in execution context:
-- Pre-imported libraries: pandas (pd), numpy (np), torch
-- Variables: {list(self.executor.data_context.keys())}
-  (You can use any of these variables directly in your code)
+## EXECUTION ENVIRONMENT:
+- The following variables are PRE-LOADED in the global scope: {list(self.executor.data_context.keys())}
+- You MUST use these existing variables.
+- **CRITICAL: DO NOT define any of the variables listed above. They already exist.**
+- **CRITICAL: DO NOT generate dummy data. It will overwrite the real data.**
+- Just start using the variables directly.
 
 ## Requirements:
-- DO NOT create dummy data. The variables listed above are ALREADY in memory.
-- DO NOT load data from files unless explicitly instructed.
 - Use the EXACT column names from DataFrame Schemas above
 - Use GPU when training models
-- Write complete, executable code
 - Import what you need (standard libraries)
 - Compute {self.target_metric} and store in a variable if training a model
 - Print important outputs: metrics, feature importance, model summaries
