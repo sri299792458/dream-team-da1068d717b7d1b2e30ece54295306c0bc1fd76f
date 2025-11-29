@@ -686,12 +686,16 @@ Implement the team's plan.
 
 ## Available in execution context:
 - Pre-imported libraries: pandas (pd), numpy (np), torch
+- Variables: {list(self.executor.data_context.keys())}
+  (You can use any of these variables directly in your code)
 
 ## Requirements:
+- DO NOT create dummy data. The variables listed above are ALREADY in memory.
+- DO NOT load data from files unless explicitly instructed.
+- Use the EXACT column names from DataFrame Schemas above
 - Use GPU when training models
 - Write complete, executable code
-- Import what you need and define variables
-- Use the EXACT column names from DataFrame Schemas above
+- Import what you need (standard libraries)
 - Compute {self.target_metric} and store in a variable if training a model
 - Print important outputs: metrics, feature importance, model summaries
 - Save trained models (joblib.dump, torch.save) if training is expensive
