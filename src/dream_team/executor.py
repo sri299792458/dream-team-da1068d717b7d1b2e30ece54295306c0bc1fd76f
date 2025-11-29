@@ -333,13 +333,19 @@ class CodeExecutor:
 def extract_code_from_text(text: str) -> str:
     """
     Extract Python code from markdown code blocks or plain text.
+    Prefer the last code block (often the final full script).
     """
-    if "```python" in text or "```" in text:
+    if "```" in text:
         parts = text.split("```")
+        chosen = None
         for i, part in enumerate(parts):
             if part.startswith("python\n") or part.startswith("python "):
-                return part[6:].strip()
-            elif i % 2 == 1:  # Odd indices are code blocks
-                return part.strip()
+                # strip "python" and keep the rest
+                chosen = part[6:]
+            elif i % 2 == 1:  # odd indices are code blocks without language tag
+                chosen = part
+        if chosen is not None:
+            return chosen.strip()
 
     return text.strip()
+

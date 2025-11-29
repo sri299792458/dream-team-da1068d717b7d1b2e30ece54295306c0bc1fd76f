@@ -254,7 +254,7 @@ Discussion so far:
 {context}
 
 Provide your input as {member.title}. Draw on your expertise.
-You don't have to solve the entire problem in one iteration. Go step by step, update as information comes in. Keep it concise (1-2 paragraphs).
+Keep it concise (1-2 paragraphs).
 """,
                         system_instruction=member.prompt,
                         temperature=temperature

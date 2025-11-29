@@ -633,6 +633,14 @@ Output ONLY a JSON list of objects, like this:
 ## Problem:
 {problem_statement}
 
+## Objective:
+Decide on the immediate next steps to improve {self.target_metric}.
+
+## Constraints:
+- Be specific and actionable.
+- You don't have to solve the entire problem in one iteration. Go step by step, adapt as information comes in.
+- Focus on the most impactful changes for this iteration.
+
 ## Available Dataframes:
 {list(self.executor.data_context.keys())}
 {columns_summary}
@@ -690,11 +698,6 @@ Implement the team's plan.
 - **CRITICAL: DO NOT define any of the variables listed above. They already exist.**
 - **CRITICAL: DO NOT generate dummy data. It will overwrite the real data.**
 - Just start using the variables directly.
-
-## XGBOOST NOTE:
-- Environment: XGBoost 3.1.1 with CUDA.
-- Do NOT use `tree_method="gpu_hist"` (it is invalid here).
-- If you use XGBRegressor, use `device="cuda"` and optionally `tree_method="hist"` or leave `tree_method` default.
 
 ## Requirements:
 - Use the EXACT column names from DataFrame Schemas above
@@ -841,25 +844,21 @@ Output ONLY Python code in ```python``` blocks.
         preloaded_vars = list(self.executor.data_context.keys())
 
         task = f"""
-Your code failed with an error. Fix it.
+Your previous code failed. Produce a corrected version.
 
 {fix_context}
 
-## Available in execution context:
-- Pre-imported libraries: pandas, numpy, torch, pathlib
-- Variables: {preloaded_vars}
+Execution context:
+- Preloaded variables (real data): {preloaded_vars}
+- Use them as-is. Do NOT recreate or overwrite them with dummy data
+  (no "batches_train = pd.DataFrame(...)" etc.).
 
-## Constraints:
-- Keep using these existing dataframes; do NOT recreate or overwrite them with dummy data
-  (e.g. no "batches_train = pd.DataFrame(...)" or similar).
-- If the error involves XGBoost and `tree_method="gpu_hist"`, fix it by using `device="cuda"`
-  and/or a valid `tree_method` like `"hist"`, not by changing the data.
+Instructions:
+- Return the FULL, standalone Python script, not just a snippet or diff.
+- Keep changes minimal: only adjust what is needed to fix the error.
+- Do not remove major steps or restructure the whole pipeline.
 
-## Task:
-Read the traceback carefully and fix the specific lines that failed.
-Do NOT just repeat the same code.
-
-Output ONLY the FIXED Python code in ```python``` blocks.
+Output ONLY the complete Python code in ```python``` blocks.
 """
 
         meeting = IndividualMeeting(
