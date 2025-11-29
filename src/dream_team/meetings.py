@@ -156,7 +156,7 @@ IMPORTANT:
 - Be decisive and specific about what to implement
 - Structure it clearly for the coding agent to understand
 
-Keep it focused (2-3 paragraphs).
+Keep it focused (1-2 paragraphs).
 """
         else:
             final_prompt = f"""You are providing intermediate synthesis.
@@ -218,7 +218,7 @@ As the team lead, open the meeting by:
 2. Asking key questions for the team to address
 3. Setting expectations for the discussion
 
-Keep it concise (2-3 paragraphs).
+Keep it concise (1-2 paragraphs).
 """
 
         opening = self.llm.generate(
@@ -254,7 +254,7 @@ Discussion so far:
 {context}
 
 Provide your input as {member.title}. Draw on your expertise.
-Keep it concise (1-2 paragraphs).
+You don't have to solve the entire problem in one iteration. Go step by step, update as information comes in. Keep it concise (1-2 paragraphs).
 """,
                         system_instruction=member.prompt,
                         temperature=temperature
