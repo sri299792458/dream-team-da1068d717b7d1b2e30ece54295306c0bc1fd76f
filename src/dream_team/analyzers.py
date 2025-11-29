@@ -7,7 +7,7 @@ Replaces simple truncation with intelligent understanding.
 
 from typing import Dict, Any, Optional
 from .semantic_state import OutputAnalysis, CodeAnalysis
-from .llm import LLM
+from .llm import GeminiLLM
 import json
 import re
 
@@ -23,14 +23,14 @@ class OutputAnalyzer:
     - Stack traces
     """
     
-    def __init__(self, llm: Optional[LLM] = None):
+    def __init__(self, llm: Optional[GeminiLLM] = None):
         """
         Initialize analyzer.
         
         Args:
             llm: LLM instance for analysis (creates default if None)
         """
-        self.llm = llm or LLM(model="gemini-2.0-flash-exp")
+        self.llm = llm or GeminiLLM(model_name="gemini-2.5-flash")
     
     def analyze(
         self,
@@ -53,16 +53,12 @@ class OutputAnalyzer:
         prompt = self._build_analysis_prompt(output, error, traceback)
         
         # Request structured output
-        response = self.llm.invoke(
-            prompt,
-            system_prompt="You are an expert code execution analyzer. Extract semantic information from execution outputs.",
-            response_format="json"
-        )
-        
-        # Parse LLM response
         try:
-            data = json.loads(response)
-        except json.JSONDecodeError:
+            data = self.llm.generate_json(
+                prompt,
+                system_instruction="You are an expert code execution analyzer. Extract semantic information from execution outputs."
+            )
+        except Exception:
             # Fallback to basic analysis
             return self._fallback_analysis(output, error, traceback)
         
@@ -176,14 +172,14 @@ class CodeAnalyzer:
     - Data flow
     """
     
-    def __init__(self, llm: Optional[LLM] = None):
+    def __init__(self, llm: Optional[GeminiLLM] = None):
         """
         Initialize analyzer.
         
         Args:
             llm: LLM instance for analysis (creates default if None)
         """
-        self.llm = llm or LLM(model="gemini-2.0-flash-exp")
+        self.llm = llm or GeminiLLM(model_name="gemini-2.5-flash")
     
     def analyze(self, code: str) -> CodeAnalysis:
         """
@@ -197,15 +193,12 @@ class CodeAnalyzer:
         """
         prompt = self._build_analysis_prompt(code)
         
-        response = self.llm.invoke(
-            prompt,
-            system_prompt="You are an expert code analyzer specializing in machine learning code.",
-            response_format="json"
-        )
-        
         try:
-            data = json.loads(response)
-        except json.JSONDecodeError:
+            data = self.llm.generate_json(
+                prompt,
+                system_instruction="You are an expert code analyzer specializing in machine learning code."
+            )
+        except Exception:
             # Fallback to basic analysis
             return self._fallback_analysis(code)
         

@@ -5,7 +5,7 @@ Implements evolving agents with growing knowledge bases and mathematical state.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 import json
 import numpy as np
@@ -158,7 +158,7 @@ class Agent:
         expertise: str,
         goal: str,
         role: str,
-        model: str = "gemini-2.0-flash-exp",
+        model: str = "gemini-2.5-flash",
         specialization_depth: int = 0
     ):
         # Traditional attributes
@@ -269,7 +269,7 @@ Role: {self.role}
             expertise=state["expertise"],
             goal=state["goal"],
             role=state["role"],
-            model=state.get("model", "gemini-2.0-flash-exp"),
+            model=state.get("model", "gemini-2.5-flash"),
             specialization_depth=state.get("specialization_depth", 0)
         )
 
