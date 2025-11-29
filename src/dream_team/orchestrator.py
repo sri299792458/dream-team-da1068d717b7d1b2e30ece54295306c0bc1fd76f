@@ -17,6 +17,10 @@ from .evolution_agent import EvolutionAgent, EvolutionDecision
 from .research import get_research_assistant
 from .utils import save_json, load_json
 from .context import ExecutionContext, ExperimentState, Reflection, ReflectionMemory
+from .event_store import EventStore
+from .analyzers import OutputAnalyzer, CodeAnalyzer
+from .semantic_state import IterationRecord
+from .context_builder import ContextBuilder
 
 
 class ExperimentOrchestrator:
@@ -55,6 +59,26 @@ class ExperimentOrchestrator:
         # Get LLM for query generation and other tasks
         from .llm import get_llm
         self.llm = get_llm()
+
+        # === Layer 1: Event store ===
+        experiment_id = results_dir.name
+        self.event_store = EventStore(
+            experiment_id=experiment_id,
+            storage_dir=self.results_dir / "events"
+        )
+
+        # === Layer 2: analyzers ===
+        self.output_analyzer = OutputAnalyzer(self.llm)
+        self.code_analyzer = CodeAnalyzer(self.llm)
+
+        # Semantic state (Layer 2)
+        self.iteration_records: List[IterationRecord] = []
+
+        # === Layer 3: Context builder ===
+        self.context_builder = ContextBuilder(
+            experiment_id=experiment_id,
+            reflection_memory=self.reflection_memory
+        )
 
         self.iteration = 0
         self.experiment_history = []
@@ -116,6 +140,8 @@ class ExperimentOrchestrator:
 
         # Store problem statement for use in prompts
         self.problem_statement = problem_statement
+        self.target_metric = target_metric
+        self.minimize_metric = minimize_metric
 
         # Check for resume
         start_iteration = 1
@@ -157,6 +183,35 @@ class ExperimentOrchestrator:
             # Step 5: Evaluate performance
             metrics = self._extract_metrics(results, target_metric)
 
+            # Log execution event
+            output_text = results.get('output', '') or ''
+            error_text = results.get('error')
+            traceback_text = results.get('traceback') or ""
+
+            self.event_store.log_event(
+                kind="execution",
+                iteration=self.iteration,
+                agent=self.coding_agent.title,
+                payload={
+                    "success": results['success'],
+                    "metrics": metrics,
+                },
+                large_data={
+                    "output": output_text,
+                    "code": implementation,
+                    "traceback": traceback_text,
+                }
+            )
+
+            # ---- Layer 2: semantic analysis ----
+            output_analysis = self.output_analyzer.analyze(
+                output=output_text,
+                error=error_text,
+                traceback=traceback_text
+            )
+
+            code_analysis = self.code_analyzer.analyze(implementation)
+
             # Step 5.5: Reflexion - Reflect on iteration and extract learnings
             print(f"\n🤔 {self.team_lead.title} reflecting on iteration...\n")
             reflection = self._reflect_on_iteration(
@@ -164,6 +219,15 @@ class ExperimentOrchestrator:
                 code=implementation,
                 results=results,
                 metrics=metrics
+            )
+
+            # Log reflection event
+            self.event_store.log_event(
+                kind="reflection",
+                iteration=self.iteration,
+                agent=self.team_lead.title,
+                payload={},
+                large_data={"reflection": reflection}
             )
 
             # Parse and store reflection
@@ -182,6 +246,35 @@ class ExperimentOrchestrator:
                 'code': results['code'],
                 'description': results['description']
             }
+
+            # Create IterationRecord
+            iter_record = IterationRecord(
+                iteration=self.iteration,
+                approach=approach,
+                code=implementation,
+                results=serializable_results,
+                metrics=metrics,
+                output_analysis=output_analysis,
+                code_analysis=code_analysis,
+                reflection=reflection
+            )
+
+            self.iteration_records.append(iter_record)
+            self.context_builder.set_iterations(self.iteration_records)
+            
+            # Update agent knowledge
+            self._update_agent_knowledge_from_iteration(
+                iter_record=iter_record,
+                target_metric=target_metric,
+                minimize=minimize_metric
+            )
+            
+            # Refine concepts
+            if self.evolution_agent is not None:
+                self.evolution_agent.refine_concepts_from_code(
+                    agent=self.coding_agent,
+                    techniques=code_analysis.techniques
+                )
 
             iteration_summary = {
                 'iteration': self.iteration,
@@ -530,62 +623,14 @@ Only output the agent specifications, nothing else.
         """Run team meeting to plan approach"""
         print("👥 Team planning meeting...\n")
 
-        # Get current context
-        history_context = ""
-        if self.experiment_history:
-            last = self.experiment_history[-1]
+        # Build centralized context
+        base_context = self.context_builder.for_team_meeting(
+            target_metric=self.target_metric
+        )
 
-            # Build history context with output from previous iteration
-            # Use summarization instead of truncation for robust context flow
-            output_preview = ""
-            if last['results'].get('output'):
-                output = last['results']['output']
-                # For bootstrap (iteration 0), show FIRST 3000 chars to include column info
-                if last.get('iteration', 0) == 0:
-                    if len(output) > 3000:
-                        output_preview = f"\n\nBootstrap Exploration Output (first 3000 chars):\n```\n{output[:3000]}...\n```"
-                    else:
-                        output_preview = f"\n\nBootstrap Exploration Output:\n```\n{output}\n```"
-                else:
-                    # For regular iterations: SUMMARIZE instead of truncate
-                    summarized_output = self._summarize_output(output)
-                    output_preview = f"\n\nPrevious Iteration Output Summary:\n```\n{summarized_output}\n```"
-
-            # Extract approach preview to avoid slicing syntax issues in f-string
-            approach = last['approach']
-            approach_preview = approach[:200] + "..." if len(approach) > 200 else approach
-
-            # Build iteration history summary (last 3 iterations)
-            history_summary = ""
-            if len(self.experiment_history) > 1:  # More than just bootstrap
-                history_summary = "\n## Iteration History:\n"
-                # Get last 3 non-bootstrap iterations
-                recent_iters = [h for h in self.experiment_history if h.get('iteration', -1) > 0][-3:]
-                for hist in recent_iters:
-                    iter_num = hist.get('iteration', '?')
-                    iter_metrics = hist.get('metrics', {})
-                    iter_approach = hist.get('approach', '')
-                    # Show first 150 chars of approach
-                    approach_summary = iter_approach[:150] + "..." if len(iter_approach) > 150 else iter_approach
-                    history_summary += f"- Iteration {iter_num}: {iter_metrics}\n  Approach: {approach_summary}\n"
-
-                # Add best metric
-                if self.best_metric is not None:
-                    history_summary += f"\n**Best metric so far**: {self.best_metric}\n"
-
-            history_context = f"{history_summary}\n## Previous Iteration Results:\nApproach tried: {approach_preview}\nMetrics achieved: {last['metrics']}\n(Note: These are PREVIOUS iteration metrics, not current){output_preview}\n"
-
-        # Research context removed - agents now use ReAct loop during meetings
-        # They search papers iteratively as they reason about proposals
-        research_context = ""
-
-        # Reflexion: Add learnings from past reflections
-        reflexion_context = self.reflection_memory.get_relevant_context()
-
-        # Use column schemas extracted during bootstrap
         columns_summary = ""
         if hasattr(self, 'column_schemas') and self.column_schemas:
-            columns_summary = "\n## AVAILABLE COLUMNS (ONLY use these exact column names):\n"
+            columns_summary = "\n## AVAILABLE COLUMNS (use EXACT column names):\n"
             for df_name, cols in self.column_schemas.items():
                 columns_summary += f"\n{df_name}: {cols}\n"
 
@@ -598,59 +643,13 @@ Only output the agent specifications, nothing else.
 ## Available Dataframes:
 {list(self.executor.data_context.keys())}
 {columns_summary}
-{history_context}
-{research_context}
-{reflexion_context}
+
+{base_context}
 
 ## Roles:
-- **Team Members**: Review previous results, then propose what to do next (will use ReAct to search papers and ground proposals)
-- **Lead**: Synthesize team's analysis and proposals into clear decisions
-
-## Task:
-Team members:
-1. First, review the previous iteration - what worked? what failed? what did you learn from the output?
-2. Then propose what to implement next based on your expertise and learnings (2-3 sentences). Use ONLY the columns listed above.
-
-Lead: Synthesize the team's analysis and proposals into a decisive action plan.
+- **Team Members**: Review recent iterations and propose what to do next.
+- **Lead**: Synthesize into a decisive action plan.
 """
-
-        # Log agenda summary (not full text - too verbose)
-        print("\n📋 TEAM MEETING CONTEXT:")
-        print(f"   Dataframes: {list(self.executor.data_context.keys())}")
-        if history_context:
-            # Show iteration history
-            if len(self.experiment_history) > 1:
-                print(f"\n   📊 Iteration History:")
-                recent_iters = [h for h in self.experiment_history if h.get('iteration', -1) > 0][-3:]
-                for hist in recent_iters:
-                    iter_num = hist.get('iteration', '?')
-                    iter_metrics = hist.get('metrics', {})
-                    iter_approach = hist.get('approach', '')
-                    approach_summary = iter_approach[:100] + "..." if len(iter_approach) > 100 else iter_approach
-                    print(f"      - Iteration {iter_num}: {iter_metrics}")
-                    print(f"        Approach: {approach_summary}")
-                if self.best_metric is not None:
-                    print(f"      → Best metric so far: {self.best_metric}")
-                print()
-            print(f"   Previous iteration: {last.get('iteration', 0)}")
-            print(f"   Previous metrics: {last['metrics']}")
-            print(f"   Previous approach: {last['approach'][:100]}...")
-            # Show what output context is being passed
-            if last['results'].get('output'):
-                output_len = len(last['results']['output'])
-                if last.get('iteration', 0) == 0:
-                    # Bootstrap - showing first 3000 chars
-                    context_len = min(3000, output_len)
-                    print(f"   📊 Context: First {context_len} chars of bootstrap output (total: {output_len} chars)")
-                    print(f"      → Contains: column schemas, data types, basic statistics")
-                else:
-                    # Iteration - showing last 15000 chars
-                    context_len = min(15000, output_len)
-                    print(f"   📊 Context: Last {context_len} chars of iteration output (total: {output_len} chars)")
-                    print(f"      → Contains: metrics, feature importance, model results, errors")
-        else:
-            print(f"   ℹ️  No previous iteration - team starting fresh")
-        print()
 
         meeting = TeamMeeting(
             save_dir=str(self.results_dir / 'meetings'),
@@ -660,22 +659,20 @@ Lead: Synthesize the team's analysis and proposals into a decisive action plan.
             team_lead=self.team_lead,
             team_members=self.team_members,
             agenda=agenda,
-            num_rounds=1  # Reduced from 2 to 1 for speed
+            num_rounds=1
         )
 
-        # Save meeting transcript
         meeting.save(f'iteration_{self.iteration:02d}_team_meeting.json')
 
-        # Log synthesized approach
-        print("\n📝 TEAM SYNTHESIS:")
-        summary_text = summary.get('summary', '')
-        if summary_text:
-            preview = summary_text[:200] + "..." if len(summary_text) > 200 else summary_text
-            print(f"   {preview}")
-        print()
+        self.event_store.log_event(
+            kind="meeting",
+            iteration=self.iteration,
+            agent=self.team_lead.title,
+            payload={"type": "team"}
+        )
 
-        # Return the summary text (not the full dictionary)
-        return summary_text
+        # meeting.run returns dict; you want the 'summary' string
+        return summary.get("summary", summary)
 
 
 
@@ -683,72 +680,34 @@ Lead: Synthesize the team's analysis and proposals into a decisive action plan.
         """Have coding agent write code to implement the approach"""
         print(f"💻 {self.coding_agent.title} implementing approach...\n")
 
-        # Include previous iteration output for context (especially exploration results)
-        previous_output_context = ""
-        if self.experiment_history:
-            last = self.experiment_history[-1]
-            if last['results'].get('output'):
-                output = last['results']['output']
+        schema_info = self._format_column_schemas()
 
-                # For bootstrap, show first 3000 chars (includes column schemas)
-                # For iterations, show last 15000 chars (enough context)
-                if last.get('iteration', 0) == 0:
-                    if len(output) > 3000:
-                        previous_output_context = f"\n## Bootstrap Exploration Output (first 3000 chars):\n```\n{output[:3000]}...\n```\n"
-                    else:
-                        previous_output_context = f"\n## Bootstrap Exploration Output:\n```\n{output}\n```\n"
-                else:
-                    if len(output) > 15000:
-                        previous_output_context = f"\n## Previous Iteration Output (last 15000 chars):\n```\n...{output[-15000:]}\n```\n"
-                    else:
-                        previous_output_context = f"\n## Previous Iteration Output:\n```\n{output}\n```\n"
-
-        # Build column schema info for coding agent
-        schema_info = ""
-        if hasattr(self, 'column_schemas') and self.column_schemas:
-            schema_info = "\n## DataFrame Schemas (use EXACT column names):\n"
-            for df_name, cols in self.column_schemas.items():
-                schema_info += f"{df_name}: {cols}\n"
-
-        # Log what context is being passed to coding agent
-        print("📊 CODING AGENT CONTEXT:")
-        print(f"   Team's plan: {approach[:150]}...")
-        if self.experiment_history:
-            last = self.experiment_history[-1]
-            if last['results'].get('output'):
-                output_len = len(last['results']['output'])
-                if last.get('iteration', 0) == 0:
-                    context_len = min(3000, output_len)
-                    print(f"   Previous output: First {context_len} chars of bootstrap (total: {output_len} chars)")
-                else:
-                    context_len = min(15000, output_len)
-                    print(f"   Previous output: Last {context_len} chars of iteration {last.get('iteration', 0)} (total: {output_len} chars)")
-        print()
+        impl_context = self.context_builder.for_coding(
+            coding_agent=self.coding_agent,
+            team_plan=approach,
+            target_metric=self.target_metric,
+            column_schemas=schema_info
+        )
 
         task = f"""
 Implement the team's plan.
 
-## Team's Plan:
-{approach}
+{impl_context}
 
-## Available dataframes:
-{list(self.executor.data_context.keys())}
-{schema_info}
-{previous_output_context}
 ## Available in execution context:
 - Pre-imported libraries: pandas (pd), numpy (np), torch
 
 ## Requirements:
 - Use GPU when training models
 - Write complete, executable code
-- Import what you need, define variables
+- Import what you need and define variables
 - Use the EXACT column names from DataFrame Schemas above
-- If training/evaluating a model, compute MAE and store it in a variable (e.g., mae = ...)
+- Compute {self.target_metric} and store in a variable if training a model
 - Print important outputs: metrics, feature importance, model summaries
-- Save trained models (e.g., joblib.dump, torch.save) so they can be reused if training took long
-- Suppress verbose output: `warnings.filterwarnings('ignore')`, use `verbose=0` or `verbose=-1` in models
+- Save trained models (joblib.dump, torch.save) if training is expensive
+- Suppress verbose output (warnings.filterwarnings('ignore'), verbose=0/-1)
 
-Output ONLY Python code in ```python blocks.
+Output ONLY Python code in ```python``` blocks.
 """
 
         meeting = IndividualMeeting(
@@ -759,30 +718,23 @@ Output ONLY Python code in ```python blocks.
             agent=self.coding_agent,
             task=task,
             num_iterations=1,
-            use_react_coding=True  # Coding agent uses ReAct for iterative reasoning
+            use_react_coding=True
         )
 
-        # Save coding meeting transcript
         meeting.save(f'iteration_{self.iteration:02d}_coding.json')
 
-        # Extract code from output
+        self.event_store.log_event(
+            kind="meeting",
+            iteration=self.iteration,
+            agent=self.coding_agent.title,
+            payload={"type": "coding"}
+        )
+
         code = extract_code_from_text(code_output)
 
-        # Save generated code
         code_file = self.results_dir / 'code' / f'iteration_{self.iteration:02d}.py'
         code_file.parent.mkdir(exist_ok=True)
         code_file.write_text(code)
-
-        # Log code preview
-        code_lines = code.split('\n')
-        print(f"   Generated {len(code_lines)} lines of code")
-        print(f"   Saved to: {code_file}")
-
-        # Show first few imports to see what libraries are being used
-        imports = [line for line in code_lines[:20] if line.strip().startswith(('import ', 'from '))]
-        if imports:
-            print(f"   Libraries: {', '.join([imp.split()[1].split('.')[0] for imp in imports[:5]])}")
-        print()
 
         return code
 
@@ -881,70 +833,28 @@ Output ONLY Python code in ```python blocks.
         """
         print(f"   🔧 {self.coding_agent.title} fixing error...\n")
 
-        # Include previous iteration output for context
-        previous_output_context = ""
-        if self.experiment_history:
-            last = self.experiment_history[-1]
-            if last['results'].get('output'):
-                output = last['results']['output']
-                if len(output) > 15000:
-                    previous_output_context = f"\n## Previous Iteration Output (last 15000 chars):\n```\n...{output[-15000:]}\n```\n"
-                else:
-                    previous_output_context = f"\n## Previous Iteration Output:\n```\n{output}\n```\n"
-
-        # Log error recovery context
-        print("🔧 ERROR RECOVERY CONTEXT:")
-        print(f"   Error: {error[:100]}...")
-        print(f"   Failed code: {len(failed_code)} chars")
-        if self.experiment_history and self.experiment_history[-1]['results'].get('output'):
-            output_len = len(self.experiment_history[-1]['results']['output'])
-            context_len = min(15000, output_len)
-            print(f"   Previous output: Last {context_len} chars (total: {output_len} chars)")
-        print()
+        fix_context = self.context_builder.for_error_fix(
+            coding_agent=self.coding_agent,
+            failed_code=failed_code,
+            error=error,
+            traceback=traceback,
+            approach=approach
+        )
 
         task = f"""
 Your code failed with an error. Fix it.
 
-## Original Approach
-{approach}
-
-## Problem Statement (for reference):
-{self.problem_statement}
-
-## Your Code That Failed
-```python
-{failed_code}
-```
-
-## Error
-{error}
-
-## Traceback
-{traceback}
+{fix_context}
 
 ## Available in execution context:
 - Pre-imported libraries: pandas, numpy, torch, pathlib
 - Variables: {list(self.executor.data_context.keys())}
-  Note: Missing packages are auto-installed, so if you see ModuleNotFoundError, just wait - it will retry automatically
 
-## DataFrame Schemas (use EXACT column names):
-{self._format_column_schemas()}
-{previous_output_context}
-## Task
-The error shows EXACTLY what's wrong. Read the traceback line number.
+## Task:
+Read the traceback carefully and fix the specific lines that failed.
+Do NOT just repeat the same code.
 
-**For NameError `'X' is not defined`:**
-1. Look at the line number in traceback
-2. Find where you used variable `X` without defining it first
-3. Either: define `X = ...` BEFORE that line, or remove the usage
-
-**For KeyError (column doesn't exist):**
-- Check the DataFrame Schemas above for the EXACT column name
-- Use only columns that exist in the schemas
-
-**DO NOT output the same code again. Actually fix the specific line that failed.**
-
-Output ONLY the FIXED Python code in ```python blocks.
+Output ONLY the FIXED Python code in ```python``` blocks.
 """
 
         meeting = IndividualMeeting(
@@ -1331,6 +1241,11 @@ Format your response with these exact section headers:
         # Take a step
         print("\n🧠 Evolution Agent analyzing team dynamics...")
         self.evolution_decision = self.evolution_agent.step()
+        decision = self.evolution_decision
+
+        # Update ContextBuilder with coverage/gaps
+        coverage, gaps = self.evolution_agent.get_coverage_and_gaps()
+        self.context_builder.set_evolution_state(gaps=gaps, coverage=coverage)
 
         decision = self.evolution_decision
         print(f"   Quality: {decision.quality:.2f}")
@@ -1387,6 +1302,15 @@ Format your response with these exact section headers:
                 goal=f"optimize {list(current_metrics.keys())[0] if current_metrics else 'metrics'}",
                 role=spec.role
             )
+
+            # Seed KB using relevant past iterations
+            if self.evolution_agent and self.iteration_records:
+                self.evolution_agent.seed_agent_knowledge(
+                    agent=new_agent,
+                    iteration_records=self.iteration_records,
+                    focus_concepts=spec.focus_concepts
+                )
+
             self.team_members.append(new_agent)
             changes_made.append(f"✅ Added {new_agent.title} ({spec.kind})")
             
@@ -1419,6 +1343,13 @@ Format your response with these exact section headers:
             'new_team': [{'title': a.title, 'expertise': a.expertise} for a in self.all_agents]
         }
         save_json(evolution_record, self.results_dir / f'evolution_iter_{self.iteration}.json')
+
+        self.event_store.log_event(
+            kind="evolution",
+            iteration=self.iteration,
+            agent=None,
+            payload=evolution_record
+        )
     
     def _update_agent_knowledge_from_iteration(
         self,
