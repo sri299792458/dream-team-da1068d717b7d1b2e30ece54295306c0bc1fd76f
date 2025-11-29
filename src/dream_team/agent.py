@@ -11,7 +11,7 @@ import json
 import numpy as np
 from .knowledge_state import (
     KnowledgeGraph, AttentionDistribution, DepthMap,
-    DynamicsState, extract_concepts_from_text
+    extract_concepts_from_text
 )
 
 if TYPE_CHECKING:
@@ -162,7 +162,6 @@ class Agent:
         self.K = KnowledgeGraph()  # K_i(t)
         self.θ = AttentionDistribution()  # θ_i(t)
         self.δ = DepthMap()  # δ_i(v,t)
-        self.dynamics = DynamicsState()  # Track history
 
         # Contribution tracking for information theory
         self.contribution_history = {
@@ -170,12 +169,6 @@ class Agent:
             'adopted': [],
             'information_gains': []
         }
-
-        # Dynamics parameters
-        self.α = 0.1  # Learning rate
-        self.β = 0.05  # Forgetting rate
-        self.λ_spec = 1.0  # Specialization weight
-        self.λ_div = 0.5  # Diversification weight
 
         # Initialize from expertise
         self._initialize_from_expertise(expertise)
@@ -252,21 +245,6 @@ Role: {self.role}
             max_depth=self.δ.max_depth(),
             top_concepts=self.δ.top_concepts(3)
         )
-
-    def evolve(self, new_title: str, new_expertise: str, new_role: str, trigger_reason: str):
-        """Evolve agent to new persona"""
-        snapshot = self.snapshot(trigger_reason)
-        self.evolution_history.append(snapshot)
-
-        self.title = new_title
-        self.expertise = new_expertise
-        self.role = new_role
-        self.specialization_depth += 1
-
-        print(f"🧬 EVOLUTION: {snapshot.title} → {new_title}")
-        print(f"   Reason: {trigger_reason}")
-        print(f"   Depth: {self.specialization_depth}")
-        print(f"   Gini: {snapshot.gini_coefficient:.2f} → (updating...)")
 
     def save(self, filepath: str):
         """Save agent state to JSON"""
@@ -405,167 +383,6 @@ Role: {self.role}
             return 0.5  # Neutral prior
 
         return np.mean(self.contribution_history['information_gains'])
-
-    # Pressure functions (core of emergence)
-
-    def compute_specialization_pressure(
-        self,
-        concept: str,
-        problem: KnowledgeGraph,
-        team: 'Team'
-    ) -> float:
-        """
-        P_spec(i,v,t) = ∂I/∂δ_i(v) · Ω_i(P,t)
-
-        How much would deepening in concept v increase my contribution?
-        """
-        if concept not in problem.concepts:
-            return 0.0  # Not relevant
-
-        current_depth = self.δ[concept]
-
-        # Marginal return to depth (initially increasing, then diminishing)
-        if current_depth < 0.4:
-            marginal_return = 1.5 * (1.0 - current_depth)  # Increasing returns early
-        elif current_depth < 0.7:
-            marginal_return = 1.0 * (1.0 - current_depth)  # Linear
-        else:
-            marginal_return = 0.5 * (1.0 - current_depth)  # Diminishing returns
-
-        # Weight by problem importance
-        importance = problem.concept_importance.get(concept, 1.0)
-
-        # Weight by current relevance
-        relevance = self.compute_coverage(problem)
-
-        return marginal_return * importance * (1.0 + relevance)
-
-    def compute_diversification_pressure(
-        self,
-        problem: KnowledgeGraph,
-        team: 'Team'
-    ) -> float:
-        """
-        P_div(i,t) = -D(T,t) · (1 - coverage)
-
-        High when team diversity is low AND I'm not covering problem
-        """
-        diversity = team.compute_diversity()
-
-        # How much of problem am I covering?
-        coverage = self.compute_weighted_coverage(problem)
-        uncovered = 1.0 - coverage
-
-        # Low diversity → high pressure to diversify
-        # High uncovered → high pressure to explore
-        return (1.0 - diversity) * uncovered
-
-    # Dynamics updates
-
-    def update_attention(
-        self,
-        problem: KnowledgeGraph,
-        team: 'Team',
-        dt: float = 0.1,
-        time: float = 0.0
-    ):
-        """
-        dθ/dt = λ_spec·P_spec + λ_div·P_div·U
-
-        Update attention distribution based on pressures
-        """
-        new_θ = AttentionDistribution()
-
-        # Diversification pressure (scalar)
-        P_div = self.compute_diversification_pressure(problem, team)
-
-        # All concepts (existing + problem)
-        all_concepts = self.K.concepts | problem.concepts
-
-        for concept in all_concepts:
-            # Ensure concept in graph
-            if concept not in self.K.concepts:
-                self.K.add_concept(concept)
-
-            # Specialization pressure for this concept
-            P_spec = self.compute_specialization_pressure(concept, problem, team)
-
-            # Uniform exploration
-            U = 1.0 / max(len(all_concepts), 1)
-
-            # Gradient
-            dθ = self.λ_spec * P_spec + self.λ_div * P_div * U
-
-            # Update with momentum (smooth changes)
-            current = self.θ[concept]
-            new_θ[concept] = current + dθ * dt
-
-        # Normalize
-        new_θ.normalize()
-        self.θ = new_θ
-
-        # Record state
-        score = self.contribution_effectiveness()
-        self.dynamics.record(self.θ, self.δ, score, time)
-
-    def update_depth(
-        self,
-        learning_quality: Dict[str, float],
-        dt: float = 0.1
-    ):
-        """
-        dδ/dt = α·θ·quality - β·δ·(1-θ)
-
-        Depth increases where attention is focused, decreases elsewhere
-        """
-        for concept in list(self.K.concepts):
-            quality = learning_quality.get(concept, 0.5)
-
-            # Learning (where attention is focused)
-            learning = self.α * self.θ[concept] * quality
-
-            # Forgetting (where attention isn't focused)
-            forgetting = self.β * self.δ[concept] * (1.0 - self.θ[concept])
-
-            # Update
-            dδ = learning - forgetting
-            new_depth = self.δ[concept] + dδ * dt
-            self.δ[concept] = new_depth
-
-            # Remove concepts that have been completely forgotten
-            if self.δ[concept] < 0.01:
-                self.K.concepts.discard(concept)
-
-    # Evolution decision
-
-    def should_evolve(self, problem: KnowledgeGraph, team: 'Team') -> Tuple[bool, str]:
-        """
-        Decide if evolution needed based on mathematical state
-
-        Returns: (should_evolve, evolution_type)
-        """
-        gini = self.δ.gini_coefficient()
-        effectiveness = self.contribution_effectiveness()
-
-        # Compute pressures
-        P_div = self.compute_diversification_pressure(problem, team)
-
-        max_P_spec = 0.0
-        for concept in problem.concepts:
-            P_spec = self.compute_specialization_pressure(concept, problem, team)
-            max_P_spec = max(max_P_spec, P_spec)
-
-        # Decision logic
-        if effectiveness < 0.3 and P_div > 0.5:
-            return True, "DIVERSIFY"
-
-        elif effectiveness > 0.6 and max_P_spec > 1.0 and gini < 0.6:
-            return True, "SPECIALIZE"
-
-        elif gini > 0.8 and P_div > 0.3:
-            return True, "BROADEN"
-
-        return False, "NONE"
 
     # Knowledge integration
 
