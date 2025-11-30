@@ -121,7 +121,11 @@ class CodeExecutor:
 
             try:
                 # Execute code with single namespace
-                exec(code, exec_namespace)
+                # Suppress python warnings
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    exec(code, exec_namespace)
                 result['success'] = True
             finally:
                 # Cancel timeout if it was set
@@ -240,7 +244,17 @@ class CodeExecutor:
     def _truncate_output(self, output: str) -> str:
         """
         Truncate output to max_output_length, keeping most recent content.
+        Also filters out known noisy logs.
         """
+        # General warning filter (case-insensitive)
+        # Filters any line containing "warning" to be as general as possible
+        if "warning" in output.lower():
+            lines = output.splitlines(keepends=True)
+            output = "".join(
+                line for line in lines 
+                if "warning" not in line.lower()
+            )
+
         if len(output) <= self.max_output_length:
             return output
 

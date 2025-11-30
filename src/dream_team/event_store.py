@@ -110,6 +110,7 @@ class EventStore:
         )
         
         self.events.append(event)
+        self.save()
         return event
     
     def _store_blob(self, event_id: str, key: str, content: str) -> Path:
