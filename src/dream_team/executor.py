@@ -56,7 +56,7 @@ class CodeExecutor:
         self,
         code: str,
         description: str = "",
-        timeout: int = 300
+        timeout: int = 1800
     ) -> Dict[str, Any]:
         """
         Execute Python code and return results.
