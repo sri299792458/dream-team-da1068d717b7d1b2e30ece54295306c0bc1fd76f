@@ -56,7 +56,8 @@ class CodeExecutor:
         self,
         code: str,
         description: str = "",
-        timeout: int = 1800
+        timeout: int = 1800,
+        silent: bool = False
     ) -> Dict[str, Any]:
         """
         Execute Python code and return results.
@@ -75,7 +76,8 @@ class CodeExecutor:
                 'metrics': extracted metrics if any
             }
         """
-        print(f"\n⚙️ Executing: {description or 'Code block'}")
+        if not silent:
+            print(f"\n⚙️ Executing: {description or 'Code block'}")
 
         # Capture stdout
         stdout_capture = io.StringIO()
@@ -154,9 +156,10 @@ class CodeExecutor:
             truncation_note = ""
             if result.get('output_truncated'):
                 truncation_note = f" (output truncated: {result['original_output_length']} → {len(result['output'])} chars)"
-            print(f"   ✅ Success{truncation_note}")
-            if result['metrics']:
-                print(f"   📊 Metrics: {result['metrics']}")
+            if not silent:
+                print(f"   ✅ Success{truncation_note}")
+                if result['metrics']:
+                    print(f"   📊 Metrics: {result['metrics']}")
 
         except TimeoutError as e:
             result['success'] = False

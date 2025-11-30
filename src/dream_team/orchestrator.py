@@ -151,13 +151,20 @@ class ExperimentOrchestrator:
         if interactive_mode is not None:
             self.interactive_mode = interactive_mode
 
-        # Resume: legacy JSON-based resume is gone; this is now a TODO for EventStore.
+        # Resume logic
         start_iteration = 1
         if resume:
-            print(
-                "📝 Resume from previous runs is not yet implemented with the new event-store "
-                "architecture. Starting fresh.\n"
-            )
+            try:
+                restored_iter = self._restore_state()
+                if restored_iter > 0:
+                    start_iteration = restored_iter + 1
+                    print(f"✅ Resumed from iteration {restored_iter}")
+                    # If we restored, bootstrap is definitely done
+                    self.bootstrap_completed = True
+            except Exception as e:
+                print(f"⚠️  Resume failed: {e}")
+                print("   Starting fresh...")
+                start_iteration = 1
 
         # Bootstrap phase: PI explores problem and recruits team
         if not self.bootstrap_completed:
@@ -871,12 +878,219 @@ Output ONLY Python code in ```python``` blocks.
                 code_file.parent.mkdir(exist_ok=True)
                 code_file.write_text(current_code)
                 print(f"   Fixed code saved to: {code_file}\n")
+                
+                # Also save manual fix if it was manual
+                if self.interactive_mode and choice == 'm':
+                     # It's already saved to manual_fix.py, but let's ensure we track it as a retry
+                     pass
 
             attempt += 1
         # Max retries exhausted, return last failed result
         print(f"   ⚠️ Max retries ({max_retries}) exhausted. Moving on with failure.\n")
         result['execution_history'] = execution_history
         return result
+
+    def _restore_state(self) -> int:
+        """
+        Restore experiment state from event store.
+        
+        Replays events to:
+        1. Restore team composition
+        2. Restore execution state (variables) by re-executing code
+        3. Restore semantic state (IterationRecords, Reflections)
+        4. Restore EvolutionAgent state
+        
+        Returns:
+            Last completed iteration number
+        """
+        print("\n🔄 Resuming experiment...")
+        
+        # 1. Load events
+        if not self.event_store.events:
+            # Try to load from disk
+            event_file = self.results_dir / "events" / self.results_dir.name / "events.json"
+            if event_file.exists():
+                print(f"   Loading events from {event_file}...")
+                self.event_store = EventStore.load(event_file, self.results_dir / "events")
+            else:
+                print("   No event history found.")
+                return 0
+                
+        events = self.event_store.events
+        if not events:
+            return 0
+            
+        last_iteration = 0
+        
+        # 2. Replay Bootstrap (Iteration 0)
+        print("   Replaying bootstrap...")
+        bootstrap_events = [e for e in events if e.iteration == 0]
+        
+        # Restore team from bootstrap recruitment
+        # We need to find the recruitment event or infer from subsequent events
+        # Actually, let's look for the 'evolution' events or just rely on the fact 
+        # that we save iteration_00_bootstrap.json which has the team
+        bootstrap_file = self.results_dir / "iteration_00_bootstrap.json"
+        if bootstrap_file.exists():
+            import json
+            with open(bootstrap_file, 'r') as f:
+                data = json.load(f)
+                
+            # Restore team members
+            if "recruited_agents" in data:
+                self.team_members = []
+                for agent_data in data["recruited_agents"]:
+                    agent = Agent(
+                        title=agent_data["title"],
+                        expertise=agent_data["expertise"],
+                        goal=agent_data.get("goal", "contribute to team success"),
+                        role=agent_data.get("role", "team member")
+                    )
+                    self.team_members.append(agent)
+                self.all_agents = [self.team_lead] + self.team_members
+                print(f"   Restored {len(self.team_members)} team members.")
+                
+            # Restore column schemas if possible (usually re-execution handles this, 
+            # but bootstrap re-execution is safer)
+            
+        # Re-execute bootstrap code to restore variables
+        bootstrap_exec = [e for e in bootstrap_events if e.kind == "execution" and e.payload.get("success")]
+        if bootstrap_exec:
+            # Take the last successful bootstrap execution
+            evt = bootstrap_exec[-1]
+            code = self.event_store.get_blob_content(evt, "code")
+            if code:
+                print("   Re-executing bootstrap code...")
+                self.executor.execute(code, description="Bootstrap Replay", silent=True)
+                
+                # Re-extract schemas
+                for df_name in ["batches_train", "batches_test", "products", "sites", "regions"]:
+                    df = self.executor.get_variable(df_name)
+                    if df is not None and hasattr(df, "columns"):
+                        self.column_schemas[df_name] = list(df.columns)
+        
+        # 3. Replay Iterations
+        # Group events by iteration
+        iter_events = {}
+        for e in events:
+            if e.iteration > 0:
+                if e.iteration not in iter_events:
+                    iter_events[e.iteration] = []
+                iter_events[e.iteration].append(e)
+                
+        sorted_iters = sorted(iter_events.keys())
+        
+        for i in sorted_iters:
+            print(f"   Replaying iteration {i}...")
+            evts = iter_events[i]
+            
+            # A. Replay Execution (Restore Memory)
+            # Find the LAST successful execution event for this iteration
+            exec_evts = [e for e in evts if e.kind == "execution" and e.payload.get("success")]
+            if exec_evts:
+                last_exec = exec_evts[-1]
+                code = self.event_store.get_blob_content(last_exec, "code")
+                if code:
+                    print(f"      Re-executing code (silent)...")
+                    self.executor.execute(code, description=f"Iteration {i} Replay", silent=True)
+            
+            # B. Replay Evolution (Team Changes)
+            evo_evts = [e for e in evts if e.kind == "evolution"]
+            for evo in evo_evts:
+                payload = evo.payload
+                # Apply deletions
+                if "decision" in payload and "deletions" in payload["decision"]:
+                    # This is tricky because we stored string representations or objects
+                    # Let's rely on the 'new_team' snapshot if available
+                    pass
+                
+                # Simplest way: if 'new_team' is in payload, rebuild team from that
+                if "new_team" in payload:
+                    print(f"      Restoring team composition from evolution event...")
+                    new_team_specs = payload["new_team"]
+                    self.team_members = []
+                    for spec in new_team_specs:
+                        if spec["title"] == self.team_lead.title:
+                            continue # Skip lead
+                        agent = Agent(
+                            title=spec["title"],
+                            expertise=spec["expertise"],
+                            goal="contribute", # Generic, will be updated if needed
+                            role="member"
+                        )
+                        self.team_members.append(agent)
+                    self.all_agents = [self.team_lead] + self.team_members
+
+            # C. Reconstruct IterationRecord (Semantic History)
+            # We need: approach, code, results, metrics, analysis, reflection
+            # This is hard to fully reconstruct from raw events without a dedicated 'record' event
+            # But we can load the JSON file!
+            iter_file = self.results_dir / f"iteration_{i:02d}.json"
+            if iter_file.exists():
+                # This file has the summary. 
+                # But we need the full IterationRecord for context builder.
+                # Let's try to rebuild from what we have.
+                
+                # We need to find the components
+                approach = ""
+                meeting_evts = [e for e in evts if e.kind == "meeting" and e.payload.get("type") == "team"]
+                # We don't store the full text in payload usually... 
+                # But we saved meeting files!
+                meeting_file = self.results_dir / "meetings" / f"iteration_{i:02d}_team_meeting.json"
+                if meeting_file.exists():
+                    with open(meeting_file, 'r') as f:
+                        m_data = json.load(f)
+                        approach = m_data.get("summary", "")
+
+                # Code is already found above
+                
+                # Reflection
+                reflection_text = ""
+                ref_evts = [e for e in evts if e.kind == "reflection"]
+                if ref_evts:
+                    reflection_text = self.event_store.get_blob_content(ref_evts[-1], "reflection") or ""
+                    # Add to reflection memory
+                    self.reflection_memory.add_reflection(Reflection.from_text(i, reflection_text))
+                
+                # Metrics
+                metrics = {}
+                if exec_evts:
+                    metrics = exec_evts[-1].payload.get("metrics", {})
+                    
+                # Re-run analysis (cheap) or try to load?
+                # Let's re-run analysis to be safe and populate objects
+                output_text = self.event_store.get_blob_content(exec_evts[-1], "output") if exec_evts else ""
+                error_text = None # We assume success if we are replaying successful exec
+                
+                output_analysis = self.output_analyzer.analyze(output_text, None, None)
+                code_analysis = self.code_analyzer.analyze(code)
+                
+                # Create Record
+                rec = IterationRecord(
+                    iteration=i,
+                    approach=approach,
+                    code=code,
+                    results={"success": True, "output": output_text}, # Minimal needed
+                    metrics=metrics,
+                    output_analysis=output_analysis,
+                    code_analysis=code_analysis,
+                    reflection=reflection_text
+                )
+                self.iteration_records.append(rec)
+                
+                # Update Evolution Agent Concepts
+                if self.evolution_agent:
+                    self.evolution_agent.refine_concepts_from_code(
+                        agent=self.coding_agent,
+                        techniques=code_analysis.techniques
+                    )
+            
+            last_iteration = i
+            
+        # Update context builder
+        self.context_builder.set_iterations(self.iteration_records)
+        
+        return last_iteration
 
     def _fix_code_error(self, failed_code: str, error: str, traceback: str, approach: str) -> str:
         """
