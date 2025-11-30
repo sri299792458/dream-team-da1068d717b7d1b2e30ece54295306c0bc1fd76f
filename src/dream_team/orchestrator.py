@@ -1040,7 +1040,18 @@ Output ONLY Python code in ```python``` blocks.
                 if meeting_file.exists():
                     with open(meeting_file, 'r') as f:
                         m_data = json.load(f)
-                        approach = m_data.get("summary", "")
+                        if isinstance(m_data, dict):
+                            approach = m_data.get("summary", "")
+                        elif isinstance(m_data, list) and m_data:
+                            # Fallback: if it's a list (transcript), try to find the last synthesis
+                            # This is a best-effort recovery
+                            last_msg = m_data[-1]
+                            if isinstance(last_msg, dict):
+                                approach = last_msg.get("message", "")
+                            else:
+                                approach = ""
+                        else:
+                            approach = ""
 
                 # Code is already found above
                 

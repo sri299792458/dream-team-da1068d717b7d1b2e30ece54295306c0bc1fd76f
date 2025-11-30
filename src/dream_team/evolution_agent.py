@@ -639,7 +639,7 @@ Rules:
             for concept in problem.concept_weights.keys():
                 tokens = concept.replace("_", " ").split()
                 if any(tok in expertise_text for tok in tokens):
-                    d0 = 0.3
+                    d0 = 0.8
                 else:
                     d0 = 0.05
                 state.depths[concept] = d0
@@ -686,7 +686,7 @@ Rules:
                 for concept in problem.concept_weights.keys():
                     tokens = concept.replace("_", " ").split()
                     if any(tok in expertise_text for tok in tokens):
-                        d0 = 0.3
+                        d0 = 0.8
                     else:
                         d0 = 0.05
                     state.depths[concept] = d0
@@ -798,11 +798,20 @@ Rules:
                     
                     groups = self._group_concepts(concepts, self.policy.config.max_concepts_per_new_agent)
                     
+                    # Prevent redundant specialization if owner is already a specialist
+                    if "Specialist" in owner_meta.title:
+                        continue
+                    
                     for group in groups:
                         if projected_size >= max_size:
                             break
 
-                        title = f"{owner_meta.title} ({', '.join(group)}) Specialist"
+                        # Avoid recursive naming if parent is already a Gap Specialist
+                        if "Gap Specialist" in owner_meta.title:
+                            title = f"Gap Specialist ({', '.join(group)})"
+                        else:
+                            title = f"{owner_meta.title} ({', '.join(group)}) Specialist"
+
                         expertise = f"Specialist focusing on: {', '.join(group)}"
                         role = "Provide deep, focused expertise on these concepts."
                         new_specs.append(NewAgentSpec(
