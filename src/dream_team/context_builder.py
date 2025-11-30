@@ -141,6 +141,11 @@ class ContextBuilder:
         """
         context = "# Context for Implementation\n\n"
         
+        # Data context
+        if column_schemas:
+            context += "## Data Schema (CRITICAL: Use EXACT column names)\n\n"
+            context += column_schemas + "\n\n"
+        
         # Team plan
         context += "## Team Plan\n\n"
         context += team_plan + "\n\n"
@@ -177,11 +182,6 @@ class ContextBuilder:
             for pattern in kb_context["patterns"]:
                 context += f"- {pattern}\n"
             context += "\n"
-        
-        # Data context
-        if column_schemas:
-            context += "## Data Schema\n\n"
-            context += column_schemas + "\n"
         
         return context
     

@@ -606,13 +606,17 @@ Thought: [Your final thoughts before coding]
 Task: {task}
 
 Your reasoning process:
-{chr(10).join([f"Step {i+1}: {thought}" for i, thought in enumerate(reasoning_steps)])}
+{...}
 
 Now write the COMPLETE, EXECUTABLE code based on your reasoning.
-Be thorough and handle all the details you thought through.
+
+Important constraints:
+- Do NOT create or overwrite any preloaded data variables; assume they already exist.
+- Do NOT construct dummy toy datasets for these variables.
 
 Output ONLY the code in ```python blocks.
 """
+
 
         final_output = self.llm.generate(
             final_prompt,

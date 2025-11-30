@@ -34,6 +34,7 @@ class ExperimentOrchestrator:
         coding_agent: Agent,
         results_dir: Path,
         evolution_engine: Optional[Any] = None,
+        interactive_mode: bool = False,
     ):
         """
         Initialize orchestrator.
@@ -52,6 +53,7 @@ class ExperimentOrchestrator:
         self.results_dir = Path(results_dir)
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
+        self.interactive_mode = interactive_mode
         self.evolution_agent: Optional[EvolutionAgent] = None  # Will be initialized in run()
         self.evolution_decision: Optional[EvolutionDecision] = None
         self.executor: Optional[CodeExecutor] = None  # Created when run() is called
@@ -105,6 +107,7 @@ class ExperimentOrchestrator:
         max_iterations: int = 5,
         target_score: Optional[float] = None,
         resume: bool = True,
+        interactive_mode: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         Run autonomous experimentation.
@@ -144,6 +147,9 @@ class ExperimentOrchestrator:
         self.problem_statement = problem_statement
         self.target_metric = target_metric
         self.minimize_metric = minimize_metric
+        
+        if interactive_mode is not None:
+            self.interactive_mode = interactive_mode
 
         # Resume: legacy JSON-based resume is gone; this is now a TODO for EventStore.
         start_iteration = 1
@@ -177,6 +183,9 @@ class ExperimentOrchestrator:
 
             # Step 3: Execute code and get results (with automatic error recovery)
             results = self._execute_with_retry(implementation, approach, max_retries=2)
+            
+            # Update implementation with the code that was actually executed (in case of fixes)
+            implementation = results.get('code', implementation)
 
             # Step 4: Extract metrics
             metrics = self._extract_metrics(results, target_metric)
@@ -624,7 +633,7 @@ Output ONLY a JSON list of objects, like this:
 
         columns_summary = ""
         if self.column_schemas:
-            columns_summary = "\n## AVAILABLE COLUMNS (use EXACT column names):\n"
+            columns_summary = "\n## AVAILABLE COLUMNS (CRITICAL: Use EXACT column names):\n"
             for df_name, cols in self.column_schemas.items():
                 columns_summary += f"\n{df_name}: {cols}\n"
 
@@ -635,12 +644,11 @@ Output ONLY a JSON list of objects, like this:
 {problem_statement}
 
 ## Objective:
-Decide on the immediate next steps to improve {self.target_metric}.
+Decide on the next step to improve {self.target_metric}.
 
 ## Constraints:
 - Be specific and actionable.
-- You don't have to solve the entire problem in one iteration. Go step by step, adapt as information comes in.
-- Focus on the most impactful changes for this iteration.
+- You don't have to solve the entire problem in one iteration. Go step by step, adapt as new information comes in.
 
 ## Available Dataframes:
 {list(self.executor.data_context.keys())}
@@ -701,7 +709,7 @@ Implement the team's plan.
 - Just start using the variables directly.
 
 ## Requirements:
-- Use the EXACT column names from DataFrame Schemas above
+- **CRITICAL: Check "Data Schema" above and use EXACT column names. Do not hallucinate columns.**
 - Use GPU when training models
 - Import what you need (standard libraries)
 - Compute {self.target_metric} and store in a variable if training a model
@@ -772,6 +780,7 @@ Output ONLY Python code in ```python``` blocks.
         """
         current_code = code
         attempt = 0
+        execution_history = []
 
         while attempt <= max_retries:
             if attempt > 0:
@@ -779,11 +788,22 @@ Output ONLY Python code in ```python``` blocks.
 
             # Execute code
             result = self._execute_implementation(current_code)
+            
+            # Store attempt info
+            attempt_info = {
+                'attempt': attempt + 1,
+                'code': current_code,
+                'success': result['success'],
+                'error': result.get('error'),
+                'output': result.get('output', '')
+            }
+            execution_history.append(attempt_info)
 
             # If successful, return
             if result['success']:
                 if attempt > 0:
                     print(f"   ✅ Fixed after {attempt} attempt(s)!\n")
+                result['execution_history'] = execution_history
                 return result
 
             # Check if failure was due to missing package - install and retry automatically
@@ -800,6 +820,44 @@ Output ONLY Python code in ```python``` blocks.
             # If failed and we have retries left, ask agent to fix
             if attempt < max_retries:
                 print(f"   ❌ Error: {result['error']}")
+
+                # Interactive mode: Give user a choice
+                if self.interactive_mode:
+                    print("\n⚠️  Execution failed.")
+                    print("Options:")
+                    print("  [A]uto-fix (Agent tries to fix)")
+                    print("  [M]anual fix (You edit the code)")
+                    print("  [C]ontinue with failure (Skip)")
+                    
+                    try:
+                        choice = input("Select option [A/m/c]: ").lower().strip()
+                    except EOFError:
+                        choice = 'a'
+                    
+                    if choice == 'm':
+                        print("   📝 Opening code for manual edit...")
+                        # Save to temp file
+                        temp_file = self.results_dir / "manual_fix.py"
+                        temp_file.write_text(current_code)
+                        print(f"   Saved to: {temp_file}")
+                        print(f"   Please edit the file and save it.")
+                        try:
+                            input("   Press Enter when ready...")
+                        except EOFError:
+                            pass
+                        
+                        if temp_file.exists():
+                            current_code = temp_file.read_text()
+                            print("   ✅ Loaded manual fix. Retrying...")
+                            continue
+                        else:
+                            print("   ⚠️ File not found. Proceeding with auto-fix.")
+                    
+                    elif choice == 'c':
+                        print("   Skipping retry...")
+                        result['execution_history'] = execution_history
+                        return result
+
                 print(f"   🔧 Asking agent to fix...\n")
                 current_code = self._fix_code_error(
                     failed_code=current_code,
@@ -817,6 +875,7 @@ Output ONLY Python code in ```python``` blocks.
             attempt += 1
         # Max retries exhausted, return last failed result
         print(f"   ⚠️ Max retries ({max_retries}) exhausted. Moving on with failure.\n")
+        result['execution_history'] = execution_history
         return result
 
     def _fix_code_error(self, failed_code: str, error: str, traceback: str, approach: str) -> str:
@@ -849,18 +908,19 @@ Your previous code failed. Produce a corrected version.
 
 {fix_context}
 
-Execution context:
-- Preloaded variables (real data): {preloaded_vars}
-- Use them as-is. Do NOT recreate or overwrite them with dummy data
-  (no "batches_train = pd.DataFrame(...)" etc.).
+EXECUTION CONTEXT (CRITICAL):
+- These variables ALREADY EXIST with REAL DATA: {preloaded_vars}
+- You MUST NOT create new DataFrames with these names.
+- You MUST NOT assign any literal/dummy data to these names.
+- If the old code contains such dummy definitions, REMOVE them.
 
 Instructions:
-- Return the FULL, standalone Python script, not just a snippet or diff.
-- Keep changes minimal: only adjust what is needed to fix the error.
-- Do not remove major steps or restructure the whole pipeline.
+- Return the FULL corrected Python script (no snippets or diffs).
+- Keep changes as small as possible while fixing the error.
 
 Output ONLY the complete Python code in ```python``` blocks.
 """
+
 
         meeting = IndividualMeeting(
             save_dir=str(self.results_dir / 'meetings'),
@@ -965,6 +1025,12 @@ Output ONLY the complete Python code in ```python``` blocks.
 {results.get('traceback', 'No traceback available')[:500]}
 """
 
+        history_section = ""
+        if 'execution_history' in results and len(results['execution_history']) > 1:
+             history_section = "\n## Previous Failed Attempts\n"
+             for i, attempt in enumerate(results['execution_history'][:-1]):
+                 history_section += f"Attempt {attempt['attempt']}:\nError: {attempt['error']}\nCode snippet: {attempt['code'][:200]}...\n\n"
+
         reflection_prompt = f"""You are reviewing iteration {self.iteration} of this research experiment.
 
 ## What Was Attempted
@@ -982,6 +1048,7 @@ Metrics: {metrics}
 ## Execution Output
 {output_preview}
 {error_section}
+{history_section}
 
 ## Reflection Task
 Analyze this iteration and extract concrete, actionable learnings.
@@ -1139,7 +1206,9 @@ Format your response with these exact section headers:
             agents=self.all_agents,
             problem_statement=problem_statement,
             target_metric=target_metric,
-            minimize_metric=minimize_metric
+            minimize_metric=minimize_metric,
+            column_schemas=self.column_schemas,
+            techniques=None
         )
         print("   ✓ Evolution agent initialized")
 
@@ -1344,4 +1413,10 @@ Format your response with these exact section headers:
                     "techniques_added": iter_record.code_analysis.techniques,
                     "is_improvement": is_improvement
                 }
+            )
+
+        # === NEW: update concept space based on techniques ===
+        if self.evolution_agent is not None:
+            self.evolution_agent.maybe_expand_concepts_from_techniques(
+                iter_record.code_analysis.techniques
             )

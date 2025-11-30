@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional, Iterable, Tuple
 import math
+from enum import Enum
 
 from .evolution_policy import EvolutionPolicy, DefaultEvolutionPolicy, EvolutionPolicyConfig, AgentMeta
 
@@ -64,6 +65,36 @@ def gini_coefficient(values: Iterable[float]) -> float:
 # ---------------------------------------------------------------------------
 # Problem representation
 # ---------------------------------------------------------------------------
+
+class ConceptCategory(str, Enum):
+    DOMAIN = "domain"
+    DATA = "data"
+    MODEL = "model"
+    INFRA = "infra"
+
+@dataclass
+class Concept:
+    name: str
+    importance: float
+    category: ConceptCategory
+    source: str = "llm"  # "llm" | "schema" | "code" | "fallback" | "reconstructed" | "code_dynamic"
+
+@dataclass
+class ConceptSpace:
+    concepts: Dict[str, Concept] = field(default_factory=dict)
+
+    def weights_dict(self) -> Dict[str, float]:
+        """For compatibility with existing math: name -> normalized weight."""
+        raw = {name: c.importance for name, c in self.concepts.items()}
+        return normalize_distribution(raw)
+
+    def concepts_list(self) -> List[str]:
+        return list(self.concepts.keys())
+
+    def get_category(self, name: str) -> Optional[ConceptCategory]:
+        c = self.concepts.get(name)
+        return c.category if c else None
+
 
 @dataclass
 class ProblemConcepts:
@@ -396,7 +427,10 @@ class EvolutionAgent:
         else:
             self.policy = policy
             
+            self.policy = policy
+            
         self.team_state: Optional[TeamMathState] = None
+        self._concept_space: Optional[ConceptSpace] = None
 
     # ----- LLM concept extraction -----
 
@@ -405,10 +439,54 @@ class EvolutionAgent:
         problem_statement: str,
         target_metric: str,
         max_concepts: int = 20,
+        column_schemas: Optional[Dict[str, List[str]]] = None,
+        techniques: Optional[List[str]] = None,
     ) -> ProblemConcepts:
         """
-        Define the problem space P by extracting key concepts and their importance.
+        Define the problem space P by extracting key concepts and their importance
+        from multiple sources: LLM (domain), Schema (data), and Code (model).
         """
+        domain = self._build_domain_concepts_from_llm(problem_statement, target_metric, max_concepts)
+        data = self._build_data_concepts_from_schema(column_schemas)
+        model = self._build_model_concepts_from_techniques(techniques)
+
+        all_concepts: Dict[str, Concept] = {}
+        for d in (domain, data, model):
+            for name, c in d.items():
+                if name in all_concepts:
+                    # keep max importance, prefer more specific category if needed
+                    existing = all_concepts[name]
+                    existing.importance = max(existing.importance, c.importance)
+                    # Could merge categories/sources here if needed
+                else:
+                    all_concepts[name] = c
+
+        if not all_concepts:
+            # fallback: use target_metric name
+            all_concepts[target_metric.lower()] = Concept(
+                name=target_metric.lower(),
+                importance=3.0,
+                category=ConceptCategory.MODEL,
+                source="fallback",
+            )
+
+        # Normalize importance to get weights
+        weights = normalize_distribution({n: c.importance for n, c in all_concepts.items()})
+
+        for name, w in weights.items():
+            all_concepts[name].importance = w
+
+        # Stash full ConceptSpace
+        self._concept_space = ConceptSpace(concepts=all_concepts)
+
+        # Build ProblemConcepts for compatibility
+        return ProblemConcepts(
+            concept_weights={name: c.importance for name, c in all_concepts.items()}
+        )
+
+    def _build_domain_concepts_from_llm(
+        self, problem_statement: str, target_metric: str, max_concepts: int
+    ) -> Dict[str, Concept]:
         prompt = f"""
 You are helping configure a multi-agent research team for this problem.
 
@@ -423,42 +501,106 @@ that the team should explicitly track.
 
 Rules:
 - Output ONE concept per line.
-- Format: concept_name | importance
+- Format: concept_name | importance | category
 - concept_name: short, snake_case, no spaces (e.g. gradient_boosting, microbial_growth)
 - importance: integer 1, 2, or 3 (3 = very important).
+- category: one of {{domain, data, model, infra}}. If unsure, use domain.
 - No explanations, no headings, only the raw list.
 """.strip()
 
         raw = self.llm.generate(prompt, temperature=0.2)
-        concept_weights: Dict[str, float] = {}
+        domain_concepts: Dict[str, Concept] = {}
 
         for line in raw.splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
             parts = [p.strip() for p in line.split("|")]
-            if len(parts) == 1:
-                name = parts[0]
-                importance = 1.0
-            else:
-                name = parts[0]
+            
+            name = parts[0]
+            if not name:
+                continue
+                
+            importance = 1.0
+            category = ConceptCategory.DOMAIN
+            
+            if len(parts) >= 2:
                 try:
                     importance = float(parts[1])
                 except ValueError:
                     importance = 1.0
-            if not name:
-                continue
-            if name in concept_weights:
-                concept_weights[name] = max(concept_weights[name], importance)
-            else:
-                concept_weights[name] = importance
-            if len(concept_weights) >= max_concepts:
+            
+            if len(parts) >= 3:
+                cat_str = parts[2].lower()
+                # Check if valid category
+                if cat_str in [e.value for e in ConceptCategory]:
+                    category = ConceptCategory(cat_str)
+            
+            domain_concepts[name] = Concept(
+                name=name,
+                importance=importance,
+                category=category,
+                source="llm",
+            )
+            
+            if len(domain_concepts) >= max_concepts:
                 break
+                
+        return domain_concepts
 
-        if not concept_weights:
-            concept_weights = {target_metric.lower(): 3.0}
+    def _build_data_concepts_from_schema(
+        self, column_schemas: Optional[Dict[str, List[str]]]
+    ) -> Dict[str, Concept]:
+        data_concepts = {}
+        if not column_schemas:
+            return data_concepts
 
-        return ProblemConcepts(concept_weights=concept_weights)
+        has_datetime = False
+        has_categorical = False
+
+        for df_name, cols in column_schemas.items():
+            for col in cols:
+                col_lower = col.lower()
+                if any(tok in col_lower for tok in ["date", "time", "timestamp"]):
+                    has_datetime = True
+                if any(tok in col_lower for tok in ["category", "type", "code", "class", "status"]):
+                    has_categorical = True
+
+        if has_datetime:
+            data_concepts["time_series_features"] = Concept(
+                name="time_series_features",
+                importance=2.0,
+                category=ConceptCategory.DATA,
+                source="schema",
+            )
+        if has_categorical:
+            data_concepts["categorical_encoding"] = Concept(
+                name="categorical_encoding",
+                importance=2.0,
+                category=ConceptCategory.DATA,
+                source="schema",
+            )
+        return data_concepts
+
+    def _build_model_concepts_from_techniques(
+        self, techniques: Optional[List[str]]
+    ) -> Dict[str, Concept]:
+        model_concepts = {}
+        if not techniques:
+            return model_concepts
+
+        for t in techniques:
+            name = t.lower().replace(" ", "_")
+            if len(name) < 4:
+                continue
+            if name not in model_concepts:
+                model_concepts[name] = Concept(
+                    name=name,
+                    importance=1.5,
+                    category=ConceptCategory.MODEL,
+                    source="code",
+                )
+        return model_concepts
 
     # ----- Initialization & Updates -----
 
@@ -468,13 +610,20 @@ Rules:
         problem_statement: str,
         target_metric: str,
         minimize_metric: bool = True,
+        column_schemas: Optional[Dict[str, List[str]]] = None,
+        techniques: Optional[List[str]] = None,
     ) -> None:
         """
         Initialize team math state from agents + problem.
         Simple init:
           - δ_i(v) = 0.3 if concept tokens appear in agent.expertise/title, else 0.05.
         """
-        problem = self.define_problem_space(problem_statement, target_metric)
+        problem = self.define_problem_space(
+            problem_statement=problem_statement,
+            target_metric=target_metric,
+            column_schemas=column_schemas,
+            techniques=techniques
+        )
         problem = problem.normalized()
 
         agent_states: Dict[str, AgentMathState] = {}
@@ -604,44 +753,55 @@ Rules:
         can_add = (current_size < max_size) or (len(agents_to_delete) > 0)
 
         if can_add:
-            # 4a) specialization candidate: strong generalist
-            best_specialize = self.team_state.select_strong_generalist(
-                overlap_threshold=self.specialize_overlap_threshold,
-                gini_threshold=self.specialize_gini_threshold,
-            )
+            # Track projected size to enforce max limit
+            projected_size = current_size - len(agents_to_delete)
 
-            if best_specialize is not None:
-                s = best_specialize
-                sorted_concepts = sorted(
-                    s.depths.items(), key=lambda x: x[1], reverse=True
+            # 4a) specialization candidate: strong generalist
+            if projected_size < max_size:
+                best_specialize = self.team_state.select_strong_generalist(
+                    overlap_threshold=self.specialize_overlap_threshold,
+                    gini_threshold=self.specialize_gini_threshold,
                 )
-                top_k = [c for c, d in sorted_concepts[:3]]
-                parent_title = getattr(s.agent_ref, "title", "Agent")
-                title = f"{parent_title} Specialist"
-                expertise = f"Specialist focusing on: {', '.join(top_k)}"
-                role = "Provide deep, focused expertise on these key concepts for the current problem."
-                new_specs.append(
-                    NewAgentSpec(
-                        kind="specialize",
-                        title=title,
-                        expertise=expertise,
-                        role=role,
-                        focus_concepts=top_k,
+
+                if best_specialize is not None:
+                    s = best_specialize
+                    sorted_concepts = sorted(
+                        s.depths.items(), key=lambda x: x[1], reverse=True
                     )
-                )
+                    top_k = [c for c, d in sorted_concepts[:3]]
+                    parent_title = getattr(s.agent_ref, "title", "Agent")
+                    title = f"{parent_title} Specialist"
+                    expertise = f"Specialist focusing on: {', '.join(top_k)}"
+                    role = "Provide deep, focused expertise on these key concepts for the current problem."
+                    new_specs.append(
+                        NewAgentSpec(
+                            kind="specialize",
+                            title=title,
+                            expertise=expertise,
+                            role=role,
+                            focus_concepts=top_k,
+                        )
+                    )
+                    projected_size += 1
 
             # 4b) gap-based new agent (using policy routing)
-            if gaps:
+            if gaps and projected_size < max_size:
                 assignments, orphans = self._assign_gaps_to_owners(gaps)
                 
                 # For each owner, create specialists or boost existing
                 for owner_key, concepts in assignments.items():
+                    if projected_size >= max_size:
+                        break
+
                     owner_state = self.team_state.agent_states[owner_key]
                     owner_meta = self.policy.get_meta(owner_state.agent_ref)
                     
                     groups = self._group_concepts(concepts, self.policy.config.max_concepts_per_new_agent)
                     
                     for group in groups:
+                        if projected_size >= max_size:
+                            break
+
                         title = f"{owner_meta.title} ({', '.join(group)}) Specialist"
                         expertise = f"Specialist focusing on: {', '.join(group)}"
                         role = "Provide deep, focused expertise on these concepts."
@@ -652,9 +812,10 @@ Rules:
                             role=role,
                             focus_concepts=group
                         ))
+                        projected_size += 1
                 
                 # For orphan concepts, create small gap agents
-                if orphans:
+                if orphans and projected_size < max_size:
                     # Sort by importance
                     sorted_orphans = sorted(
                         orphans, 
@@ -664,6 +825,9 @@ Rules:
                     groups = self._group_concepts(sorted_orphans, self.policy.config.max_concepts_per_new_agent)
                     
                     for group in groups:
+                        if projected_size >= max_size:
+                            break
+
                         title = f"Gap Specialist ({', '.join(group)})"
                         expertise = "Domain expert created to cover under-served concepts: " + ", ".join(group)
                         role = "Introduce methods and knowledge centered on these concepts."
@@ -674,6 +838,7 @@ Rules:
                             role=role,
                             focus_concepts=group
                         ))
+                        projected_size += 1
 
         debug = {
             "quality": quality,
@@ -843,6 +1008,86 @@ Rules:
         for pattern in relevant_patterns[-5:]:  # Last 5 relevant patterns
             kb.successful_patterns.append(pattern)
 
+    def maybe_expand_concepts_from_techniques(
+        self,
+        techniques: List[str],
+        min_occurrences: int = 2
+    ) -> None:
+        """
+        Expand the concept space with new model/technique concepts
+        based on frequently used techniques.
+        """
+        if self.team_state is None:
+            return
+
+        if not hasattr(self, "_concept_space") or self._concept_space is None:
+            # Reconstruct from current problem weights if needed
+            self._concept_space = ConceptSpace(
+                concepts={
+                    name: Concept(
+                        name=name,
+                        importance=w,
+                        category=ConceptCategory.MODEL,  # fallback
+                        source="reconstructed",
+                    )
+                    for name, w in self.team_state.problem.concept_weights.items()
+                }
+            )
+
+        # Count occurrences
+        from collections import Counter
+        counter = Counter(t.lower().replace(" ", "_") for t in techniques)
+
+        new_concepts = {}
+        for name, count in counter.items():
+            if count < min_occurrences:
+                continue
+            if name in self._concept_space.concepts:
+                continue
+
+            new_concepts[name] = Concept(
+                name=name,
+                importance=0.5 * max(
+                    (c.importance for c in self._concept_space.concepts.values()), default=1.0
+                ),
+                category=ConceptCategory.MODEL,
+                source="code_dynamic",
+            )
+
+        if not new_concepts:
+            return
+
+        # Merge into concept space
+        self._concept_space.concepts.update(new_concepts)
+
+        # Re-normalize weights
+        weights = normalize_distribution({
+            n: c.importance for n, c in self._concept_space.concepts.items()
+        })
+        for n, w in weights.items():
+            self._concept_space.concepts[n].importance = w
+
+        # Update problem weights used by TeamMathState
+        self.team_state.problem = ProblemConcepts(
+            concept_weights={n: c.importance for n, c in self._concept_space.concepts.items()}
+        )
+
+        # Initialize depths for the new concepts for all agents
+        for state in self.team_state.agent_states.values():
+            expertise_text = (
+                (getattr(state.agent_ref, "expertise", "") or "") + " " +
+                (getattr(state.agent_ref, "title", "") or "")
+            ).lower().replace("-", " ").replace("_", " ")
+
+            for name in new_concepts.keys():
+                if name in state.depths:
+                    continue
+                tokens = name.replace("_", " ").split()
+                if any(tok in expertise_text for tok in tokens):
+                    d0 = 0.3
+                else:
+                    d0 = 0.05
+                state.depths[name] = d0
 
     # ----- Serialization -----
 
