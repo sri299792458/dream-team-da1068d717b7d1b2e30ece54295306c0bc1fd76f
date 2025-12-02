@@ -843,19 +843,22 @@ Output ONLY Python code in ```python``` blocks.
                     
                     if choice == 'm':
                         print("   📝 Opening code for manual edit...")
-                        # Save to temp file
-                        temp_file = self.results_dir / "manual_fix.py"
-                        temp_file.write_text(current_code)
-                        print(f"   Saved to: {temp_file}")
+                        # Save to specific retry file
+                        retry_count = attempt + 1
+                        manual_file = self.results_dir / "code" / f"iteration_{self.iteration:02d}_retry_{retry_count}.py"
+                        manual_file.parent.mkdir(exist_ok=True)
+                        manual_file.write_text(current_code)
+                        print(f"   Saved to: {manual_file}")
                         print(f"   Please edit the file and save it.")
                         try:
                             input("   Press Enter when ready...")
                         except EOFError:
                             pass
                         
-                        if temp_file.exists():
-                            current_code = temp_file.read_text()
-                            print("   ✅ Loaded manual fix. Retrying...")
+                        if manual_file.exists():
+                            current_code = manual_file.read_text()
+                            print(f"   ✅ Loaded manual fix from {manual_file.name}. Retrying...")
+                            attempt += 1
                             continue
                         else:
                             print("   ⚠️ File not found. Proceeding with auto-fix.")
@@ -864,7 +867,6 @@ Output ONLY Python code in ```python``` blocks.
                         print("   Skipping retry...")
                         result['execution_history'] = execution_history
                         return result
-
                 print(f"   🔧 Asking agent to fix...\n")
                 current_code = self._fix_code_error(
                     failed_code=current_code,
