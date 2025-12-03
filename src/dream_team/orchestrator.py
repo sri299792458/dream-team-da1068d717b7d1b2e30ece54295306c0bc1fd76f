@@ -19,7 +19,7 @@ from .research import get_research_assistant
 from .utils import save_json
 from .context import Reflection, ReflectionMemory
 from .event_store import EventStore
-from .analyzers import OutputAnalyzer, CodeAnalyzer
+from .analyzers import OutputAnalyzer
 from .semantic_state import IterationRecord, OutputAnalysis
 from .context_builder import ContextBuilder
 
@@ -357,6 +357,9 @@ class ExperimentOrchestrator:
         # Persist event store (Layer 1 ground truth)
         event_store_path = self.event_store.save()
         print(f"📦 Event store saved: {event_store_path}")
+        
+        # Save full state (Layer 5 persistence)
+        self._save_state()
 
         print(f"\n{'=' * 60}")
         print("✅ EXPERIMENT COMPLETE")
@@ -370,7 +373,6 @@ class ExperimentOrchestrator:
     # ======================================================================
     # Bootstrap phase
     # ======================================================================
-
     def _bootstrap_exploration(self, problem_statement: str):
         """
         Bootstrap phase: PI explores problem and recruits team.
@@ -437,8 +439,7 @@ The PI wants to do initial exploration. Write Python code to implement this:
 - ONLY print what you observe - no summaries, interpretations, or conclusions
 - Use variables from "Available in execution context" above
 - Suppress warnings if needed
-
-Output ONLY the Python code, wrapped in ```python code blocks.
+- Output ONLY the Python code, wrapped in ```python code blocks.
 """
 
         code_meeting = IndividualMeeting(
@@ -1132,7 +1133,6 @@ Output ONLY Python code in ```python blocks.
         self.context_builder.set_iterations(self.iteration_records)
         
         return last_iteration
-
     def _fix_code_error(self, failed_code: str, error: str, traceback: str, approach: str) -> str:
         """
         Ask coding agent to fix code that failed execution.
@@ -1192,6 +1192,21 @@ Output ONLY the complete Python code in ```python``` blocks.
         fixed_code = extract_code_from_text(code_output)
 
         return fixed_code
+
+    def _save_state(self):
+        """Save current experiment state (EvolutionAgent, Agents)"""
+        # Save EvolutionAgent state
+        if self.evolution_agent:
+            state_file = self.results_dir / "evolution_state.json"
+            save_json(self.evolution_agent.to_dict(), state_file)
+        
+        # Save Agents
+        agents_dir = self.results_dir / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        for agent in self.all_agents:
+            # Sanitize filename
+            safe_title = "".join(c for c in agent.title if c.isalnum() or c in (' ', '_', '-')).strip().replace(' ', '_')
+            agent.save(str(agents_dir / f"{safe_title}.json"))
 
     # ======================================================================
     # Metrics, reflection, evolution, summary
@@ -1515,6 +1530,26 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
                 )
             )
 
+        # Check if we can restore state
+        state_file = self.results_dir / "evolution_state.json"
+        if state_file.exists():
+            print(f"   🔄 Loading evolution state from {state_file}...")
+            try:
+                import json
+                with open(state_file, 'r') as f:
+                    data = json.load(f)
+                self.evolution_agent = EvolutionAgent.from_dict(data, self.llm)
+                # We still need to ensure policy is set (from_dict might not set it fully if not in dict)
+                self.evolution_agent.policy = policy
+                # Update agent refs in team state
+                if self.evolution_agent.team_state:
+                    self.evolution_agent.update_team(self.all_agents)
+                print("   ✅ Evolution state restored")
+                return
+            except Exception as e:
+                print(f"   ⚠️ Failed to restore evolution state: {e}")
+                # Fall through to fresh initialization
+
         self.evolution_agent = EvolutionAgent(
             llm=self.llm,
             target_team_size=(3, 6),
@@ -1687,17 +1722,10 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
         
         # Update all agents
         for agent in self.all_agents:
-            # Add techniques from code analysis
-            if iter_record.code_analysis:
-                for technique in iter_record.code_analysis.techniques:
-                    agent.knowledge_base.add_technique(technique)
-            
             # Track success/failure patterns
             if is_improvement and current_metric is not None and prev_metric is not None:
                 improvement = abs(current_metric - prev_metric)
-                technique = "approach"
-                if iter_record.code_analysis and iter_record.code_analysis.techniques:
-                    technique = iter_record.code_analysis.techniques[0]
+                technique = "iteration_approach"
                 
                 agent.knowledge_base.add_success_pattern(
                     iteration=iter_record.iteration,
@@ -1706,9 +1734,7 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
                     improvement=improvement
                 )
             elif not is_improvement and prev_metric is not None:
-                technique = "approach"
-                if iter_record.code_analysis and iter_record.code_analysis.techniques:
-                    technique = iter_record.code_analysis.techniques[0]
+                technique = "iteration_approach"
                 
                 agent.knowledge_base.add_failure_pattern(
                     iteration=iter_record.iteration,
@@ -1735,21 +1761,11 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
         
         # Log KB update event
         if self.event_store:
-            techniques_added = []
-            if iter_record.code_analysis:
-                techniques_added = iter_record.code_analysis.techniques
-                
             self.event_store.log_event(
                 kind="kb_update",
                 iteration=iter_record.iteration,
                 payload={
-                    "techniques_added": techniques_added,
                     "is_improvement": is_improvement
                 }
             )
 
-        # === NEW: update concept space based on techniques ===
-        if self.evolution_agent is not None and iter_record.code_analysis:
-            self.evolution_agent.maybe_expand_concepts_from_techniques(
-                iter_record.code_analysis.techniques
-            )

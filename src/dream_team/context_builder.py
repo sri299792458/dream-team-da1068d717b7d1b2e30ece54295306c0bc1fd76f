@@ -109,9 +109,9 @@ class ContextBuilder:
                     for obs in it.output_analysis.key_observations[:3]:
                         context += f"- {obs}\n"
                 
-                # Techniques used
-                if it.code_analysis and it.code_analysis.techniques:
-                    context += f"**Techniques:** {', '.join(it.code_analysis.techniques[:5])}\n"
+                # Techniques used (removed code_analysis)
+                # if it.code_analysis and it.code_analysis.techniques:
+                #     context += f"**Techniques:** {', '.join(it.code_analysis.techniques[:5])}\n"
                 
                 context += "\n"
         
@@ -215,6 +215,12 @@ class ContextBuilder:
             context += "## Successful Patterns\n\n"
             for pattern in kb_context["patterns"]:
                 context += f"- {pattern}\n"
+            context += "\n"
+            
+        if kb_context.get("papers"):
+            context += "## Relevant Research\n\n"
+            for paper_summary in kb_context["papers"]:
+                context += f"- {paper_summary}\n"
             context += "\n"
         
         return context
@@ -329,20 +335,20 @@ class ContextBuilder:
         context += "## Approach\n\n"
         context += iter_record.approach + "\n\n"
         
-        # Code Analysis
-        if iter_record.code_analysis:
-            context += "## Code Analysis\n\n"
-            context += f"**Complexity:** {iter_record.code_analysis.complexity}\n"
-            
-            if iter_record.code_analysis.techniques:
-                context += f"**Techniques used:** {', '.join(iter_record.code_analysis.techniques)}\n"
-            
-            if iter_record.code_analysis.key_decisions:
-                context += "**Key decisions:**\n"
-                for decision in iter_record.code_analysis.key_decisions:
-                    context += f"- {decision}\n"
-            
-            context += "\n"
+        # Code Analysis (removed)
+        # if iter_record.code_analysis:
+        #     context += "## Code Analysis\n\n"
+        #     context += f"**Complexity:** {iter_record.code_analysis.complexity}\n"
+        #     
+        #     if iter_record.code_analysis.techniques:
+        #         context += f"**Techniques used:** {', '.join(iter_record.code_analysis.techniques)}\n"
+        #     
+        #     if iter_record.code_analysis.key_decisions:
+        #         context += "**Key decisions:**\n"
+        #         for decision in iter_record.code_analysis.key_decisions:
+        #             context += f"- {decision}\n"
+        #     
+        #     context += "\n"
         
         # Output Analysis
         context += "## Execution Analysis\n\n"

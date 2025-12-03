@@ -98,7 +98,8 @@ class KnowledgeBase:
         result = {
             "techniques": [],
             "patterns": [],
-            "pitfalls": []
+            "pitfalls": [],
+            "papers": []
         }
         
         if intent == "plan_next_iteration":
@@ -108,12 +109,22 @@ class KnowledgeBase:
             result["pitfalls"] = self.error_insights[-max_items:]
             # Techniques mastered
             result["techniques"] = self.techniques_mastered[-max_items:]
+            # Relevant papers
+            for paper in self.papers[-max_items:]:
+                if paper.key_findings:
+                    summary = f"{paper.title} ({paper.year}): {'; '.join(paper.key_findings[:2])}"
+                    result["papers"].append(summary)
         
         elif intent == "code_implementation":
             # Successful patterns for guidance
             result["patterns"] = self.successful_patterns[-max_items:]
             # Techniques to use
             result["techniques"] = self.techniques_mastered[-max_items:]
+            # Papers with techniques
+            for paper in self.papers[-max_items:]:
+                if paper.techniques:
+                    summary = f"{paper.title}: techniques={', '.join(paper.techniques[:3])}"
+                    result["papers"].append(summary)
         
         elif intent == "fix_error":
             # Error insights and solutions

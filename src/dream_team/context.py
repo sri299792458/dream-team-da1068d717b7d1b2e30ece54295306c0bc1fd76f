@@ -32,63 +32,82 @@ class Reflection:
 
     @classmethod  
     def from_text(cls, iteration: int, reflection_text: str) -> "Reflection":
-        """
-        Parse reflection text and extract key insights.
-
-        Args:
-            iteration: Iteration number
-            reflection_text: LLM-generated reflection text
-
-        Returns:
-            Reflection object with raw text and extracted insights
-        """
-        # Store raw text
+        """Parse reflection text and extract key insights."""
         raw = reflection_text.strip()
-        
-        # Extract key insights (simple heuristic: look for patterns)
         insights = []
         dead_ends = []
         
-        current_section = None
         lines = raw.split('\n')
+        current_section = None
+        current_content = []
         
         for line in lines:
-            line = line.strip()
-            if not line:
+            line_stripped = line.strip()
+            if not line_stripped:
+                # Save accumulated content when hitting blank line
+                if current_section and current_content:
+                    content_text = ' '.join(current_content)
+                    if len(content_text) > 20:  # Skip trivial content
+                        if current_section == 'dead_ends':
+                            dead_ends.append(content_text)
+                        else:
+                            insights.append(content_text)
+                    current_content = []
                 continue
-                
-            # Detect sections
-            line_lower = line.lower()
-            if 'understanding' in line_lower or 'teach us' in line_lower:
-                current_section = 'insights'
-            elif 'attribution' in line_lower or 'drove' in line_lower:
-                current_section = 'insights'
-            elif 'constraints' in line_lower or 'limitations' in line_lower:
-                current_section = 'insights'
-            elif 'dead end' in line_lower or 'rule out' in line_lower:
-                current_section = 'dead_ends'
             
-            # Extract bullet points
-            if line.startswith(('-', '•', '*', '→')):
-                content = line.lstrip('-•*→').strip()
-                if content:
-                    if current_section == 'dead_ends':
-                        dead_ends.append(content)
-                    elif current_section == 'insights':
-                        insights.append(content)
-            # Also capture numbered lists
-            elif len(line) > 2 and line[0].isdigit() and line[1] in '.):':
-                content = line[2:].strip()
-                if content and current_section:
-                    if current_section == 'dead_ends':
-                        dead_ends.append(content)
-                    elif current_section == 'insights':
-                        insights.append(content)
+            line_lower = line_stripped.lower()
+            
+            # Detect section headers (markdown headers, numbered sections, or keyword markers)
+            is_header = (
+                line_stripped.startswith('#') or
+                (len(line_stripped) > 2 and line_stripped[0].isdigit() and line_stripped[1] in '.):') or
+                any(marker in line_lower for marker in ['understanding', 'attribution', 'dead end', 'rule out', 'constraints', 'learned', 'conclusion'])
+            )
+            
+            if is_header:
+                # Save previous section content first
+                if current_section and current_content:
+                    content_text = ' '.join(current_content)
+                    if len(content_text) > 20:
+                        if current_section == 'dead_ends':
+                            dead_ends.append(content_text)
+                        else:
+                            insights.append(content_text)
+                    current_content = []
+                
+                # Determine new section type
+                if 'dead end' in line_lower or 'rule out' in line_lower or 'avoid' in line_lower:
+                    current_section = 'dead_ends'
+                elif any(x in line_lower for x in ['understanding', 'attribution', 'constraints', 'learned', 'insight', 'finding']):
+                    current_section = 'insights'
+                else:
+                    current_section = 'insights'  # Default to insights
+                continue
+            
+            # Collect content - handle bullets OR prose
+            if line_stripped.startswith(('-', '•', '*', '→')):
+                content = line_stripped.lstrip('-•*→').strip()
+            elif len(line_stripped) > 2 and line_stripped[0].isdigit() and line_stripped[1] in '.):':
+                content = line_stripped[2:].strip()
+            else:
+                content = line_stripped
+            
+            if content and current_section:
+                current_content.append(content)
+        
+        # Don't forget last section
+        if current_section and current_content:
+            content_text = ' '.join(current_content)
+            if len(content_text) > 20:
+                if current_section == 'dead_ends':
+                    dead_ends.append(content_text)
+                else:
+                    insights.append(content_text)
         
         return cls(
             iteration=iteration,
             raw_text=raw,
-            key_insights=insights if insights else ["See raw reflection text"],
+            key_insights=insights if insights else ["No structured insights extracted"],
             dead_ends=dead_ends
         )
 

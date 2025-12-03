@@ -942,37 +942,8 @@ Rules:
     
     # ----- Integration with 5-layer architecture -----
     
-    def refine_concepts_from_code(self, agent: Any, techniques: List[str], boost: float = 0.1) -> None:
-        """
-        Refine agent concept depths based on techniques used in code.
-        
-        If a technique matches a concept, bump δ for that agent-concept pair.
-        This provides feedback from actual code execution to the mathematical model.
-        
-        Args:
-            agent: Agent whose depths to update
-            techniques: List of techniques from CodeAnalysis
-            boost: How much to boost matching concept depths (default: 0.1)
-        """
-        if self.team_state is None:
-            return
-        
-        agent_key = getattr(agent, "title", repr(agent))
-        if agent_key not in self.team_state.agent_states:
-            return
-        
-        agent_state = self.team_state.agent_states[agent_key]
-        
-        # Match techniques to concepts
-        for technique in techniques:
-            technique_lower = technique.lower().replace(" ", "_")
-            
-            for concept in agent_state.depths.keys():
-                # Check if technique matches concept
-                if technique_lower in concept or concept in technique_lower:
-                    # Boost this concept depth
-                    current_depth = agent_state.depths[concept]
-                    agent_state.depths[concept] = min(1.0, current_depth + boost)
+    # refine_concepts_from_code removed as per user request
+
     
     def get_coverage_and_gaps(self) -> Tuple[Dict[str, float], List[str]]:
         """
@@ -998,47 +969,15 @@ Rules:
         """
         Seed a newly created agent's knowledge base with relevant past learnings.
         
-        Extracts techniques and patterns from past iterations that match the
-        agent's focus concepts.
-        
-        Args:
-            agent: Newly created agent
-            iteration_records: Past IterationRecords from the experiment
-            focus_concepts: Concepts this agent should focus on
+        (Simplified: Technique extraction removed. Future: could use output analysis)
         """
         if not iteration_records:
             return
         
-        kb = agent.knowledge_base
-        
-        # Extract relevant techniques from past iterations
-        relevant_techniques = set()
-        relevant_patterns = []
-        
-        for iter_rec in iteration_records:
-            # Check if any code techniques match focus concepts
-            for technique in iter_rec.code_analysis.techniques:
-                technique_lower = technique.lower().replace(" ", "_")
-                
-                for concept in focus_concepts:
-                    if technique_lower in concept or concept in technique_lower:
-                        relevant_techniques.add(technique)
-                        
-                        # If this iteration was successful, add as pattern
-                        if iter_rec.metrics and len(iter_rec.metrics) > 0:
-                            # Get any metric value as proxy for success
-                            metric_val = list(iter_rec.metrics.values())[0]
-                            if metric_val is not None:
-                                relevant_patterns.append(
-                                    f"Iter {iter_rec.iteration}: {technique} achieved {list(iter_rec.metrics.keys())[0]}={metric_val:.4f}"
-                                )
-        
-        # Populate agent KB
-        for tech in relevant_techniques:
-            kb.add_technique(tech)
-        
-        for pattern in relevant_patterns[-5:]:  # Last 5 relevant patterns
-            kb.successful_patterns.append(pattern)
+        # Logic relying on code_analysis.techniques has been removed.
+        # We can add other seeding logic here later if needed.
+        pass
+
 
     def refine_concept_space(
         self,
@@ -1165,86 +1104,8 @@ Remove concepts (importance=0) that proved irrelevant.
                     else:
                         state.depths[name] = 0.05
 
-    def maybe_expand_concepts_from_techniques(
-        self,
-        techniques: List[str],
-        min_occurrences: int = 2
-    ) -> None:
-        """
-        Expand the concept space with new model/technique concepts
-        based on frequently used techniques.
-        """
-        if self.team_state is None:
-            return
+    # maybe_expand_concepts_from_techniques removed as per user request
 
-        if not hasattr(self, "_concept_space") or self._concept_space is None:
-            # Reconstruct from current problem weights if needed
-            self._concept_space = ConceptSpace(
-                concepts={
-                    name: Concept(
-                        name=name,
-                        importance=w,
-                        category=ConceptCategory.MODEL,  # fallback
-                        source="reconstructed",
-                    )
-                    for name, w in self.team_state.problem.concept_weights.items()
-                }
-            )
-
-        # Count occurrences
-        from collections import Counter
-        counter = Counter(t.lower().replace(" ", "_") for t in techniques)
-
-        new_concepts = {}
-        for name, count in counter.items():
-            if count < min_occurrences:
-                continue
-            if name in self._concept_space.concepts:
-                continue
-
-            new_concepts[name] = Concept(
-                name=name,
-                importance=0.5 * max(
-                    (c.importance for c in self._concept_space.concepts.values()), default=1.0
-                ),
-                category=ConceptCategory.MODEL,
-                source="code_dynamic",
-            )
-
-        if not new_concepts:
-            return
-
-        # Merge into concept space
-        self._concept_space.concepts.update(new_concepts)
-
-        # Re-normalize weights
-        weights = normalize_distribution({
-            n: c.importance for n, c in self._concept_space.concepts.items()
-        })
-        for n, w in weights.items():
-            self._concept_space.concepts[n].importance = w
-
-        # Update problem weights used by TeamMathState
-        self.team_state.problem = ProblemConcepts(
-            concept_weights={n: c.importance for n, c in self._concept_space.concepts.items()}
-        )
-
-        # Initialize depths for the new concepts for all agents
-        for state in self.team_state.agent_states.values():
-            expertise_text = (
-                (getattr(state.agent_ref, "expertise", "") or "") + " " +
-                (getattr(state.agent_ref, "title", "") or "")
-            ).lower().replace("-", " ").replace("_", " ")
-
-            for name in new_concepts.keys():
-                if name in state.depths:
-                    continue
-                tokens = name.replace("_", " ").split()
-                if any(tok in expertise_text for tok in tokens):
-                    d0 = 0.3
-                else:
-                    d0 = 0.05
-                state.depths[name] = d0
 
     # ----- Serialization -----
 
