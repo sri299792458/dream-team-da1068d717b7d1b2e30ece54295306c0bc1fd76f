@@ -402,7 +402,7 @@ Decide what initial exploration will help you understand:
 2. What the challenge involves
 3. What expertise you'll need on your team
 
-In 2-3 sentences, describe what exploration code should be written.
+In 2-3 sentences, describe what exploration code should be written by the coding agent.
 """
 
         meeting = IndividualMeeting(
