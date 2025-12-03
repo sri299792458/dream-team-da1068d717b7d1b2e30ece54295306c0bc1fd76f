@@ -211,6 +211,7 @@ Keep it concise (1-2 paragraphs).
         print(f"{opening}\n")
 
         # Discussion rounds
+        synthesis = ""
         for round_num in range(num_rounds):
             print(f"--- Round {round_num + 1}/{num_rounds} ---\n")
 
