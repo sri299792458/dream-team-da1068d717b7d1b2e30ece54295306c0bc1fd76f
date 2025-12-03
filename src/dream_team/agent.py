@@ -158,7 +158,7 @@ class Agent:
         expertise: str,
         goal: str,
         role: str,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3-pro-preview",
         specialization_depth: int = 0
     ):
         # Traditional attributes
@@ -269,7 +269,7 @@ Role: {self.role}
             expertise=state["expertise"],
             goal=state["goal"],
             role=state["role"],
-            model=state.get("model", "gemini-2.5-flash"),
+            model=state.get("model", "gemini-3-pro-preview"),
             specialization_depth=state.get("specialization_depth", 0)
         )
 
@@ -342,7 +342,7 @@ Role: {self.role}
             expertise=data["expertise"],
             goal=data["goal"],
             role=data["role"],
-            model=data.get("model", "gemini-2.5-flash"),
+            model=data.get("model", "gemini-3-pro-preview"),
             specialization_depth=data.get("specialization_depth", 0)
         )
 

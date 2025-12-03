@@ -18,9 +18,10 @@ class GeminiLLM:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model_name: str = "gemini-2.5-flash",
-        temperature: float = 0.7,
-        max_retries: int = 3
+        model_name: str = "gemini-3-pro-preview",
+        temperature: float = 1.0,
+        max_retries: int = 3,
+        thinking_level: str = "low"  # "low" or "high"
     ):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         if not self.api_key:
@@ -30,6 +31,7 @@ class GeminiLLM:
         self.model_name = model_name
         self.temperature = temperature
         self.max_retries = max_retries
+        self.thinking_level = thinking_level
 
         self.model = genai.GenerativeModel(model_name)
 
@@ -42,11 +44,13 @@ class GeminiLLM:
         prompt: str,
         system_instruction: Optional[str] = None,
         temperature: Optional[float] = None,
+        thinking_level: Optional[str] = None,
         response_format: str = "text"  # "text" or "json"
     ) -> str:
         """Generate response with retry logic"""
 
         temp = temperature if temperature is not None else self.temperature
+        think = thinking_level if thinking_level is not None else self.thinking_level
 
         for attempt in range(self.max_retries):
             try:
@@ -62,6 +66,7 @@ class GeminiLLM:
                 # Configure generation
                 generation_config = {
                     "temperature": temp,
+                    "thinking_level": think,
                 }
 
                 if response_format == "json":
@@ -89,13 +94,15 @@ class GeminiLLM:
         self,
         prompt: str,
         system_instruction: Optional[str] = None,
-        temperature: Optional[float] = None
+        temperature: Optional[float] = None,
+        thinking_level: Optional[str] = None
     ) -> Dict:
         """Generate JSON response"""
         response_text = self.generate(
             prompt,
             system_instruction=system_instruction,
             temperature=temperature,
+            thinking_level=thinking_level,
             response_format="json"
         )
 
@@ -112,10 +119,12 @@ class GeminiLLM:
     def chat(
         self,
         messages: List[Dict[str, str]],
-        temperature: Optional[float] = None
+        temperature: Optional[float] = None,
+        thinking_level: Optional[str] = None
     ) -> str:
         """Multi-turn chat (for meetings)"""
         temp = temperature if temperature is not None else self.temperature
+        think = thinking_level if thinking_level is not None else self.thinking_level
 
         # Convert to Gemini format
         # messages format: [{"role": "user"/"assistant", "content": "..."}]
@@ -132,7 +141,10 @@ class GeminiLLM:
         # Send last message
         response = chat.send_message(
             messages[-1]["content"],
-            generation_config={"temperature": temp}
+            generation_config={
+                "temperature": temp,
+                "thinking_level": think
+            }
         )
 
         self.total_calls += 1

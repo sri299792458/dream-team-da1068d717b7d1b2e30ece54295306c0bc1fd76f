@@ -30,7 +30,7 @@ class OutputAnalyzer:
         Args:
             llm: LLM instance for analysis (creates default if None)
         """
-        self.llm = llm or GeminiLLM(model_name="gemini-2.5-flash")
+        self.llm = llm or GeminiLLM(model_name="gemini-3-pro-preview")
     
     def analyze(
         self,
