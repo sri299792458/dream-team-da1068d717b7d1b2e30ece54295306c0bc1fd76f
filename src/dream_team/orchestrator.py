@@ -1323,6 +1323,7 @@ Output ONLY the complete Python code in ```python``` blocks.
 
         # Get previous metric for comparison
         prev_metric = None
+        last_record = None
         improvement_text = ""
         if len(self.iteration_records) > 0:
             last_record = self.iteration_records[-1]
@@ -1341,7 +1342,7 @@ Reflect on this iteration and extract learnings.
 ## Metrics
 {metrics}
 """
-        if self.target_metric in last_record.metrics:
+        if last_record and self.target_metric in last_record.metrics:
                 prev_metric = last_record.metrics[self.target_metric]
                 current_metric = metrics.get(self.target_metric)
                 if current_metric is not None and prev_metric is not None:
