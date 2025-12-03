@@ -1004,9 +1004,9 @@ Rules:
             for name, c in self._concept_space.concepts.items()
         ])
         
-        # Get reflection snippet
-        reflection_snippet = reflection_text[:300] + "..." if len(reflection_text) > 300 else reflection_text
-        
+        # Get reflection snippet (increased from 300 to 600 chars)
+        reflection_snippet = reflection_text[:600] + "..." if len(reflection_text) > 600 else reflection_text
+
         prompt = f"""
 Identify 5-7 core technical concepts for this research problem.
 
@@ -1014,7 +1014,7 @@ Identify 5-7 core technical concepts for this research problem.
 {problem_statement}
 
 ## Latest Iteration (#{iteration}):
-Tried: {last_approach[:200]}
+Tried: {last_approach[:800]}
 Result: {target_metric} = {last_metric:.4f} ({'improved' if improved else 'no improvement'})
 PI noted: {reflection_snippet}
 

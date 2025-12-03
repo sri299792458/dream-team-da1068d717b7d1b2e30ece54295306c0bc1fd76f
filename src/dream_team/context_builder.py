@@ -183,20 +183,116 @@ class ContextBuilder:
         # Team plan
         context += "## Team Plan\n\n"
         context += team_plan + "\n\n"
-        
+
+        # Coding agent's KB learnings
+        kb_data = coding_agent.knowledge_base.collect_for_intent("code_implementation", max_items=3)
+        if kb_data.get("patterns") or kb_data.get("techniques"):
+            context += "## Your Past Learnings\n\n"
+            if kb_data.get("patterns"):
+                context += "**Successful Patterns:**\n"
+                for pattern in kb_data["patterns"]:
+                    context += f"- {pattern}\n"
+                context += "\n"
+            if kb_data.get("techniques"):
+                context += "**Techniques You've Mastered:**\n"
+                for technique in kb_data["techniques"]:
+                    context += f"- {technique}\n"
+                context += "\n"
+
         # Last iteration insights
         if self.iterations:
             last = self.iterations[-1]
             context += "## Last Iteration Insights\n\n"
-            
+
             # What worked
             # if last.output_analysis.key_observations:
-        for key, value in iter_record.metrics.items():
-            if key != target_metric:
-                context += f"**{key}:** {value:.4f}\n"
-        
+            for key, value in last.metrics.items():
+                if key != target_metric:
+                    context += f"**{key}:** {value:.4f}\n"
+
         return context
-    
+
+    def for_error_fix(
+        self,
+        coding_agent: Agent,
+        failed_code: str,
+        error: str,
+        traceback: str,
+        approach: str
+    ) -> str:
+        """
+        Build context for fixing code errors.
+
+        Includes:
+        - Error details (message, traceback)
+        - Failed code
+        - Original approach
+        - Similar past failures (from reflection memory)
+        - Execution state (variables, schemas)
+        - Agent's error insights from KB
+
+        Args:
+            coding_agent: The agent who will fix the code
+            failed_code: Code that failed execution
+            error: Error message
+            traceback: Full error traceback
+            approach: Original approach description
+
+        Returns:
+            Formatted context string
+        """
+        context = "# Context for Error Fix\n\n"
+
+        # Error details
+        context += "## Error Details\n\n"
+        context += f"**Error Message:**\n```\n{error}\n```\n\n"
+
+        if traceback:
+            # Truncate very long tracebacks
+            tb_preview = traceback[:2000] + "\n... (truncated)" if len(traceback) > 2000 else traceback
+            context += f"**Traceback:**\n```\n{tb_preview}\n```\n\n"
+
+        # Original approach
+        context += "## Original Approach\n\n"
+        context += approach + "\n\n"
+
+        # Failed code
+        code_preview = failed_code[:1500] + "\n... (truncated)" if len(failed_code) > 1500 else failed_code
+        context += "## Failed Code\n\n"
+        context += f"```python\n{code_preview}\n```\n\n"
+
+        # Similar past failures
+        similar_failures = self.reflection_memory.query_similar_failures(error)
+        if similar_failures:
+            context += similar_failures + "\n"
+
+        # Agent's error insights from KB
+        kb_data = coding_agent.knowledge_base.collect_for_intent("fix_error", max_items=3)
+        if kb_data.get("pitfalls"):
+            context += "## Your Past Error Insights\n\n"
+            for pitfall in kb_data["pitfalls"]:
+                context += f"- {pitfall}\n"
+            context += "\n"
+
+        if kb_data.get("patterns"):
+            context += "## Patterns That Worked Before\n\n"
+            for pattern in kb_data["patterns"]:
+                context += f"- {pattern}\n"
+            context += "\n"
+
+        # Execution state (variables available)
+        var_inventory = self._build_variable_inventory()
+        if var_inventory:
+            context += var_inventory
+
+        # Current schemas
+        current_schemas = self._build_column_schemas()
+        if current_schemas:
+            context += "## Current Data Schemas\n\n"
+            context += current_schemas
+
+        return context
+
     # ===== Execution State Helpers =====
     
     def _build_variable_inventory(self) -> str:

@@ -233,7 +233,11 @@ Keep it concise (1-2 paragraphs).
                         kb_context += "\nYour Past Successes:\n" + "\n".join([f"- {p}" for p in kb_data["patterns"]])
                     if kb_data["techniques"]:
                         kb_context += "\nYour Mastered Techniques:\n" + "\n".join([f"- {t}" for t in kb_data["techniques"]])
-                        
+                    if kb_data["pitfalls"]:
+                        kb_context += "\nPitfalls to Avoid:\n" + "\n".join([f"- {p}" for p in kb_data["pitfalls"]])
+                    if kb_data["papers"]:
+                        kb_context += "\nRelevant Research:\n" + "\n".join([f"- {p}" for p in kb_data["papers"]])
+
                     response = self.llm.generate(
                         f"""You are participating in a team meeting.
 
