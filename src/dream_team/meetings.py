@@ -315,7 +315,7 @@ Rules:
             for msg in recent
         ])
 
-    def _optional_react_proposal(self, agent, agenda: str, context: str, temperature: float, max_steps: int = 3) -> str:
+    def _optional_react_proposal(self, agent, agenda: str, context: str, temperature: float, max_steps: int = 2) -> str:
         """
         Agent can OPTIONALLY search papers if they decide they need to.
 
@@ -524,7 +524,7 @@ Focus on what can be directly applied to improve model performance."""
 class IndividualMeeting(Meeting):
     """One-on-one meeting with critic"""
 
-    def _react_coding_task(self, agent, task: str, temperature: float, max_steps: int = 3) -> str:
+    def _react_coding_task(self, agent, task: str, temperature: float, max_steps: int = 2) -> str:
         """
         ReAct loop for coding tasks: iterative reasoning to plan implementation.
 
@@ -634,7 +634,7 @@ Output ONLY the code in ```python blocks.
 
         return final_output
 
-    def _optional_search_task(self, agent, task: str, temperature: float, max_steps: int = 3) -> str:
+    def _optional_search_task(self, agent, task: str, temperature: float, max_steps: int = 2) -> str:
         """
         Agent can OPTIONALLY search papers if they decide they need to.
 

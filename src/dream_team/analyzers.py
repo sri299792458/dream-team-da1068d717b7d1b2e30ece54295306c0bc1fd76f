@@ -94,13 +94,13 @@ Error (if any):
 {{traceback}}
 
 Provide analysis as valid JSON only, no other text:
-{{
+{{{{
     "success": true or false,
     "summary": "1-2 sentence summary",
     "key_observations": ["obs1", "obs2"],
     "errors": [],
     "warnings": []
-}}
+}}}}
 
 Rules:
 - All fields required. Use empty arrays [] if none.
