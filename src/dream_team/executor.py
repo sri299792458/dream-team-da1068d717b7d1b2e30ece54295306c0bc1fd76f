@@ -97,8 +97,8 @@ class CodeExecutor:
         # Add data context to namespace
         exec_namespace.update(self.data_context)
 
-        # Track initial keys to identify new variables
-        initial_keys = set(exec_namespace.keys())
+        # Track initial state (keys and object ids) to identify new or modified variables
+        initial_state = {k: id(v) for k, v in exec_namespace.items()}
 
         result = {
             'success': False,
@@ -140,16 +140,20 @@ class CodeExecutor:
                 result['output_truncated'] = True
                 result['original_output_length'] = len(full_output)
 
-            # Extract NEW variables created during execution
+            # Extract NEW or MODIFIED variables created during execution
             result['variables'] = {
                 k: v for k, v in exec_namespace.items()
-                if k not in initial_keys and not k.startswith('_')
+                if not k.startswith('_') and (
+                    k not in initial_state or  # New variable
+                    id(v) != initial_state[k]  # Modified variable (re-assigned)
+                )
             }
 
-            # Extract metrics
+            # Extract metrics ONLY from new/modified variables
+            # This prevents stale metrics from previous iterations from leaking in
             metric_names = ['mae', 'rmse', 'f1', 'accuracy', 'score', 'cv_scores', 'error', 'loss', 'val_loss', 'auc', 'precision', 'recall']
             result['metrics'] = {
-                k: v for k, v in exec_namespace.items()
+                k: v for k, v in result['variables'].items()
                 if any(metric in k.lower() for metric in metric_names) and isinstance(v, (int, float, np.number))
             }
 

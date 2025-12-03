@@ -19,8 +19,7 @@ from .research import get_research_assistant
 from .utils import save_json
 from .context import Reflection, ReflectionMemory
 from .event_store import EventStore
-from .analyzers import OutputAnalyzer
-from .semantic_state import IterationRecord, OutputAnalysis
+from .semantic_state import IterationRecord
 from .context_builder import ContextBuilder
 
 
@@ -71,7 +70,7 @@ class ExperimentOrchestrator:
         )
 
         # === Layer 2: analyzers (semantic state builders) ===
-        self.output_analyzer = OutputAnalyzer(self.llm)
+        
         # CodeAnalyzer removed as per user request - relying on output analysis
         self.iteration_records: List[IterationRecord] = []
 
@@ -223,11 +222,7 @@ class ExperimentOrchestrator:
             )
 
             # ---- Layer 2: semantic analysis ----
-            output_analysis = self.output_analyzer.analyze(
-                output=output_text,
-                error=error_text,
-                traceback=traceback_text,
-            )
+
             # code_analysis = self.code_analyzer.analyze(implementation) # Removed
 
             # Step 5.5: Reflexion - Reflect on iteration and extract learnings
@@ -237,7 +232,6 @@ class ExperimentOrchestrator:
                 code=implementation,
                 results=results,
                 metrics=metrics,
-                output_analysis=output_analysis,
             )
 
             # Log reflection event
@@ -271,7 +265,6 @@ class ExperimentOrchestrator:
                 code=implementation,
                 results=serializable_results,
                 metrics=metrics,
-                output_analysis=output_analysis,
                 reflection=reflection,
             )
 
@@ -506,14 +499,6 @@ The PI wants to do initial exploration. Write Python code to implement this:
             print("❌ Exploration failed after retries:")
             print(results["error"])
 
-        # Analyze exploration results to provide structured insights
-        print("\n🔍 Analyzing exploration results...")
-        exploration_analysis = self.output_analyzer.analyze(
-            output=results['output'] if results['success'] else results.get('error', ''),
-            error=results.get('error'),
-            traceback=results.get('traceback')
-        )
-
         # PI reviews results and recruits team using ReAct
         print(f"\n{self.team_lead.title} reviewing exploration results and recruiting team...\n")
 
@@ -523,12 +508,8 @@ Based on the problem and exploration results, decide what expertise you need on 
 ## Problem:
 {problem_statement}
 
-## Exploration Insights:
-**Summary:**
-{exploration_analysis.raw_summary}
-
-**Key Observations:**
-{chr(10).join([f"- {obs}" for obs in exploration_analysis.key_observations])}
+## Exploration Output:
+{results['output'] if results['success'] else results.get('error', '')}
 
 ## Your Task:
 List 1-3 team members you want to recruit. For each, provide:
@@ -1107,9 +1088,6 @@ Output ONLY Python code in ```python blocks.
                 output_text = self.event_store.get_blob_content(exec_evts[-1], "output") if exec_evts else ""
                 error_text = None # We assume success if we are replaying successful exec
                 
-                output_analysis = self.output_analyzer.analyze(output_text, None, None)
-                # code_analysis = self.code_analyzer.analyze(code) # Removed
-                
                 # Create Record
                 rec = IterationRecord(
                     iteration=i,
@@ -1117,8 +1095,6 @@ Output ONLY Python code in ```python blocks.
                     code=code,
                     results={"success": True, "output": output_text}, # Minimal needed
                     metrics=metrics,
-                    output_analysis=output_analysis,
-                    code_analysis=None,
                     reflection=reflection_text
                 )
                 self.iteration_records.append(rec)
@@ -1283,7 +1259,6 @@ Output ONLY the complete Python code in ```python``` blocks.
         code: str,
         results: Dict[str, Any],
         metrics: Dict[str, float],
-        output_analysis: Optional[OutputAnalysis] = None,
     ) -> str:
         """
         Generate self-reflection on iteration (Reflexion: Shinn et al.)
@@ -1296,33 +1271,18 @@ Output ONLY the complete Python code in ```python``` blocks.
             code: Implementation
             results: Execution results
             metrics: Extracted metrics
-            output_analysis: Semantic analysis of output (optional)
 
         Returns:
             Reflection text with structured sections
         """
-        # Prepare output section
-        # If we have analysis, we rely on it and skip raw output to save context/noise.
-        # If no analysis, we fall back to raw output.
-        output_section = ""
-        output_preview = ""
-        if output_analysis:
-            output_section = f"""
-## Execution Analysis (Automated)
-**Summary:** {output_analysis.raw_summary}
-
-**Key Observations:**
-{chr(10).join([f"- {obs}" for obs in output_analysis.key_observations])}
-"""
+        # Prepare output section (Raw output)
+        output = results.get('output', '')
+        if len(output) > 5000:
+            output_preview = output[:5000] + "\n... (truncated)"
         else:
-            # Fallback: Show raw output if no analysis available
-            output = results.get('output', '')
-            if len(output) > 5000:
-                output_preview = output[:5000] + "\n... (truncated)"
-            else:
-                output_preview = output
-            
-            output_section = f"""
+            output_preview = output
+        
+        output_section = f"""
 ## Execution Output (Raw)
 {output_preview}
 """
@@ -1351,19 +1311,6 @@ Output ONLY the complete Python code in ```python``` blocks.
             last_record = self.iteration_records[-1]
             prev_metric = last_record.metrics.get(list(metrics.keys())[0]) if metrics else None
             
-        task = f"""
-Reflect on this iteration and extract learnings.
-
-## Approach
-{approach}
-
-{output_section}
-{error_section}
-{history_section}
-
-## Metrics
-{metrics}
-"""
         if last_record and self.target_metric in last_record.metrics:
                 prev_metric = last_record.metrics[self.target_metric]
                 current_metric = metrics.get(self.target_metric)
@@ -1381,15 +1328,6 @@ Reflect on this iteration and extract learnings.
         if not improvement_text and prev_metric is None:
             improvement_text = "(baseline)"
         
-        # Get clean summary from output analyzer if available
-        output_summary = output_preview
-        if hasattr(self, 'output_analyzer') and results.get('success'):
-            # Use the last iteration record's output analysis if available
-            if len(self.iteration_records) > 0:
-                last_analysis = self.iteration_records[-1].output_analysis
-                if last_analysis.raw_summary:
-                    output_summary = last_analysis.raw_summary
-        
         reflection_prompt = f"""You are the Principal Investigator reviewing Iteration {self.iteration} of this research experiment.
 
 ## Hypothesis (What we planned to test)
@@ -1403,7 +1341,7 @@ Reflect on this iteration and extract learnings.
 ## Observations (What happened)
 Execution: {'Successful' if results.get('success') else 'Failed'}
 Target metric ({self.target_metric}): {metrics.get(self.target_metric, 'N/A')} {improvement_text}
-{output_summary}
+{output_section}
 {error_section}
 {history_section}
 
@@ -1779,11 +1717,12 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
                     iteration=iter_record.iteration,
                     technique=technique,
                     metric=target_metric,
-                    reason=iter_record.output_analysis.raw_summary
+                    reason="Did not improve metric"
                 )
             
             # Track errors
-            for error in iter_record.output_analysis.errors:
+            if iter_record.results.get('error'):
+                error = iter_record.results['error']
                 error_type = "ExecutionError"
                 if "NameError" in error:
                     error_type = "NameError"
