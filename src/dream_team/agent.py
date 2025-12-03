@@ -43,7 +43,7 @@ class Paper:
 @dataclass
 class KnowledgeBase:
     """Agent's accumulated knowledge"""
-    domain_facts: List[str] = field(default_factory=list)
+    # domain_facts: List[str] = field(default_factory=list)  <-- REMOVED
     papers: List[Paper] = field(default_factory=list)
     error_insights: List[str] = field(default_factory=list)
 
@@ -52,13 +52,7 @@ class KnowledgeBase:
         if not any(p.title == paper.title for p in self.papers):
             self.papers.append(paper)
 
-    def add_fact(self, fact: str, source: Optional[str] = None):
-        """Add domain fact with optional citation"""
-        fact_with_source = f"{fact} [Source: {source}]" if source else fact
-    def add_fact(self, fact: str, source: str):
-        fact_with_source = f"{fact} (Source: {source})"
-        if fact_with_source not in self.domain_facts:
-            self.domain_facts.append(fact_with_source)
+    # add_fact REMOVED
 
     # add_technique, add_success_pattern, add_failure_pattern REMOVED
     
@@ -110,7 +104,6 @@ class KnowledgeBase:
 
     def to_dict(self):
         return {
-            "domain_facts": self.domain_facts,
             "papers": [p.to_dict() for p in self.papers],
             "error_insights": self.error_insights
         }
