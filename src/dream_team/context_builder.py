@@ -264,11 +264,7 @@ class ContextBuilder:
                 context += f"- {pitfall}\n"
             context += "\n"
 
-        if kb_data.get("patterns"):
-            context += "## Patterns That Worked Before\n\n"
-            for pattern in kb_data["patterns"]:
-                context += f"- {pattern}\n"
-            context += "\n"
+
 
         # Execution state (variables available)
         var_inventory = self._build_variable_inventory()

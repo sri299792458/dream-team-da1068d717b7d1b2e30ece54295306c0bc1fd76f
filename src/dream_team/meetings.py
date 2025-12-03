@@ -229,10 +229,7 @@ Keep it concise (1-2 paragraphs).
                     # Inject KB context
                     kb_data = member.knowledge_base.collect_for_intent("plan_next_iteration")
                     kb_context = ""
-                    if kb_data["patterns"]:
-                        kb_context += "\nYour Past Successes:\n" + "\n".join([f"- {p}" for p in kb_data["patterns"]])
-                    if kb_data["techniques"]:
-                        kb_context += "\nYour Mastered Techniques:\n" + "\n".join([f"- {t}" for t in kb_data["techniques"]])
+
                     if kb_data["pitfalls"]:
                         kb_context += "\nPitfalls to Avoid:\n" + "\n".join([f"- {p}" for p in kb_data["pitfalls"]])
                     if kb_data["papers"]:
@@ -337,10 +334,7 @@ Rules:
         # Inject KB context
         kb_data = agent.knowledge_base.collect_for_intent("plan_next_iteration")
         kb_context = ""
-        if kb_data["patterns"]:
-            kb_context += "\nYour Past Successes:\n" + "\n".join([f"- {p}" for p in kb_data["patterns"]])
-        if kb_data["techniques"]:
-            kb_context += "\nYour Mastered Techniques:\n" + "\n".join([f"- {t}" for t in kb_data["techniques"]])
+
 
         initial_prompt = f"""You are {agent.title} participating in a team meeting.
 
