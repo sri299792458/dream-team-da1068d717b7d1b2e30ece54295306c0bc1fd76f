@@ -20,7 +20,7 @@ from .utils import save_json
 from .context import Reflection, ReflectionMemory
 from .event_store import EventStore
 from .analyzers import OutputAnalyzer, CodeAnalyzer
-from .semantic_state import IterationRecord
+from .semantic_state import IterationRecord, OutputAnalysis
 from .context_builder import ContextBuilder
 
 
@@ -508,8 +508,8 @@ Output ONLY the Python code, wrapped in ```python code blocks.
         print("\n🔍 Analyzing exploration results...")
         exploration_analysis = self.output_analyzer.analyze(
             output=results['output'] if results['success'] else results.get('error', ''),
-            task_description="Initial data exploration and problem understanding",
-            code=code
+            error=results.get('error'),
+            traceback=results.get('traceback')
         )
 
         # PI reviews results and recruits team using ReAct
@@ -1245,10 +1245,6 @@ Output ONLY the complete Python code in ```python``` blocks.
         self,
         approach: str,
         code: str,
-    def _reflect_on_iteration(
-        self,
-        approach: str,
-        code: str,
         results: Dict[str, Any],
         metrics: Dict[str, float],
         output_analysis: Optional[OutputAnalysis] = None,
@@ -1330,7 +1326,7 @@ Reflect on this iteration and extract learnings.
 ## Metrics
 {metrics}
 """
-            if self.target_metric in last_record.metrics:
+        if self.target_metric in last_record.metrics:
                 prev_metric = last_record.metrics[self.target_metric]
                 current_metric = metrics.get(self.target_metric)
                 if current_metric is not None and prev_metric is not None:
@@ -1692,13 +1688,17 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
         # Update all agents
         for agent in self.all_agents:
             # Add techniques from code analysis
-            for technique in iter_record.code_analysis.techniques:
-                agent.knowledge_base.add_technique(technique)
+            if iter_record.code_analysis:
+                for technique in iter_record.code_analysis.techniques:
+                    agent.knowledge_base.add_technique(technique)
             
             # Track success/failure patterns
             if is_improvement and current_metric is not None and prev_metric is not None:
                 improvement = abs(current_metric - prev_metric)
-                technique = iter_record.code_analysis.techniques[0] if iter_record.code_analysis.techniques else "approach"
+                technique = "approach"
+                if iter_record.code_analysis and iter_record.code_analysis.techniques:
+                    technique = iter_record.code_analysis.techniques[0]
+                
                 agent.knowledge_base.add_success_pattern(
                     iteration=iter_record.iteration,
                     technique=technique,
@@ -1706,7 +1706,10 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
                     improvement=improvement
                 )
             elif not is_improvement and prev_metric is not None:
-                technique = iter_record.code_analysis.techniques[0] if iter_record.code_analysis.techniques else "approach"
+                technique = "approach"
+                if iter_record.code_analysis and iter_record.code_analysis.techniques:
+                    technique = iter_record.code_analysis.techniques[0]
+                
                 agent.knowledge_base.add_failure_pattern(
                     iteration=iter_record.iteration,
                     technique=technique,
@@ -1732,17 +1735,21 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
         
         # Log KB update event
         if self.event_store:
+            techniques_added = []
+            if iter_record.code_analysis:
+                techniques_added = iter_record.code_analysis.techniques
+                
             self.event_store.log_event(
                 kind="kb_update",
                 iteration=iter_record.iteration,
                 payload={
-                    "techniques_added": iter_record.code_analysis.techniques,
+                    "techniques_added": techniques_added,
                     "is_improvement": is_improvement
                 }
             )
 
         # === NEW: update concept space based on techniques ===
-        if self.evolution_agent is not None:
+        if self.evolution_agent is not None and iter_record.code_analysis:
             self.evolution_agent.maybe_expand_concepts_from_techniques(
                 iter_record.code_analysis.techniques
             )

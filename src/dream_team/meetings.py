@@ -613,7 +613,7 @@ Thought: [Your final thoughts before coding]
 Task: {task}
 
 Your reasoning process:
-{...}
+{chr(10).join([f"Step {i+1}: {thought}" for i, thought in enumerate(reasoning_steps)])}
 
 Write COMPLETE, EXECUTABLE Python code based on your reasoning.
 

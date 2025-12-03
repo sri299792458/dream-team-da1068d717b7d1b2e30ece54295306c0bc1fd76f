@@ -572,8 +572,6 @@ Rules:
         problem = self.define_problem_space(
             problem_statement=problem_statement,
             target_metric=target_metric,
-            column_schemas=column_schemas,
-            techniques=techniques
         )
         problem = problem.normalized()
 
@@ -1063,7 +1061,7 @@ Rules:
         
         # Format current concepts with coverage
         current_concepts_str = "\n".join([
-            f"{name}: importance={c.importance:.2f}, coverage={self.team_state.concept_coverage().get(name, 0):.2f}"
+            f"{name}: importance={c.importance:.2f}, coverage={self.team_state.team_coverage().get(name, 0):.2f}"
             for name, c in self._concept_space.concepts.items()
         ])
         
