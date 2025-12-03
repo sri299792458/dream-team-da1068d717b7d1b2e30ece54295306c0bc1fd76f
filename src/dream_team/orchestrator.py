@@ -324,6 +324,9 @@ class ExperimentOrchestrator:
             # Update best metric BEFORE printing summary
             self._update_best_metric(metrics, target_metric, minimize_metric)
 
+            # Save state (evolution, agents, etc.) to prevent data loss
+            self._save_state()
+
             # Iteration summary (console)
             print(f"\n{'=' * 60}")
             print(f"ITERATION {self.iteration} SUMMARY")
@@ -1129,6 +1132,26 @@ Output ONLY Python code in ```python blocks.
             
         # Update context builder
         self.context_builder.set_iterations(self.iteration_records)
+
+        # 4. Replay Agent Knowledge & Restore Best Metric
+        print("   Restoring agent knowledge and metrics...")
+        self.best_metric = None
+        
+        for record in self.iteration_records:
+            # Replay KB updates
+            self._update_agent_knowledge_from_iteration(
+                iter_record=record,
+                target_metric=self.target_metric if self.target_metric else "mae", # Fallback if not set yet
+                minimize=self.minimize_metric
+            )
+            
+            # Recalculate best metric
+            if self.target_metric and self.target_metric in record.metrics:
+                self._update_best_metric(
+                    metrics=record.metrics,
+                    target_metric=self.target_metric,
+                    minimize=self.minimize_metric
+                )
         
         return last_iteration
     def _fix_code_error(self, failed_code: str, error: str, traceback: str, approach: str) -> str:
@@ -1568,6 +1591,22 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
             techniques=None
         )
         print("   ✓ Evolution agent initialized")
+
+        # Replay history if we have records but no evolution state (fresh init on resume)
+        if self.iteration_records and not state_file.exists():
+            print("   🔄 Replaying history into Evolution Agent...")
+            for record in self.iteration_records:
+                # Only replay if we have the target metric
+                if target_metric in record.metrics:
+                    val = record.metrics[target_metric]
+                    self.evolution_agent.record_metric(val)
+                    # Safe update: only math state, no side effects
+                    self.evolution_agent.team_state.update_all_depths()
+            
+            # Update context builder with restored state
+            coverage, gaps = self.evolution_agent.get_coverage_and_gaps()
+            self.context_builder.set_evolution_state(gaps=gaps, coverage=coverage)
+            print("   ✅ Evolution history replayed")
 
     def _check_mathematical_evolution(
         self,
