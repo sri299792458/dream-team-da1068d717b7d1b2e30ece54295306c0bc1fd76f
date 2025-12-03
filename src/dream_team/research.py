@@ -274,7 +274,7 @@ Respond in JSON format:
 
             try:
                 # Assuming llm.generate_json exists in your LLM wrapper
-                analysis = self.llm.generate_json(analysis_prompt, temperature=0.3)
+                analysis = self.llm.generate_json(analysis_prompt, temperature=1.0)
 
                 paper = Paper(
                     title=result.title,

@@ -521,7 +521,7 @@ Rules:
 """
 
         try:
-            raw_concepts = self.llm.generate_json(prompt, temperature=0.2)
+            raw_concepts = self.llm.generate_json(prompt, temperature=1.0)
             if not isinstance(raw_concepts, list):
                 raw_concepts = []
         except Exception:

@@ -619,7 +619,7 @@ Rules:
 """
 
         try:
-            parsed_agents = self.llm.generate_json(parse_task, temperature=0.1)
+            parsed_agents = self.llm.generate_json(parse_task, temperature=1.0)
             # Handle case where LLM returns a dict instead of list (e.g. {"agents": [...]})
             if isinstance(parsed_agents, dict):
                 if "agents" in parsed_agents:

@@ -106,7 +106,7 @@ Thought: [Your refined thinking]
             thought = self.llm.generate(
                 thinking_prompt,
                 system_instruction=team_lead.prompt,
-                temperature=temperature * 0.7
+                temperature=1.0
             ).strip()
 
             # Remove "Thought:" prefix if present
@@ -133,7 +133,7 @@ Write your FINAL SYNTHESIS based on your reasoning.
 Requirements:
 - Make FINAL DECISIONS. Do not ask clarifying questions.
 - Be specific: name the exact methods, features, or approaches to implement.
-- Structure clearly for the coding agent.
+- You should only convey what has to be implemented clearly, the code will be written by the coding agent.
 
 Output 1-2 focused paragraphs.
 """
@@ -159,7 +159,7 @@ Keep it concise (1-2 paragraphs).
         synthesis = self.llm.generate(
             final_prompt,
             system_instruction=team_lead.prompt,
-            temperature=temperature * 0.8
+            temperature=1.0
         )
 
         return synthesis
@@ -170,7 +170,7 @@ Keep it concise (1-2 paragraphs).
         team_members: List[Agent],
         agenda: str,
         num_rounds: int = 2,
-        temperature: float = 0.7
+        temperature: float = 1.0
     ) -> Dict:
         """
         Run a team meeting
@@ -265,7 +265,7 @@ Keep it concise (1-2 paragraphs).
                 team_lead=team_lead,
                 agenda=agenda,
                 context=context,
-                temperature=temperature * 0.8,  # Slightly more focused
+                temperature=1.0,  # Slightly more focused
                 is_final=is_final_round
             )
 
@@ -297,7 +297,7 @@ Rules:
 - No markdown, no ```json blocks.
 """
 
-        metadata = self.llm.generate_json(metadata_prompt, temperature=0.3)
+        metadata = self.llm.generate_json(metadata_prompt, temperature=1.0)
 
         # Return team lead's synthesis as the main summary
         return {
@@ -492,7 +492,7 @@ Output a JSON array only, no other text:
 Focus on what can be directly applied to improve model performance."""
 
                     try:
-                        insights = self.llm.generate_json(analysis_prompt, temperature=0.3)
+                        insights = self.llm.generate_json(analysis_prompt, temperature=1.0)
                         if isinstance(insights, list):
                             paper.key_findings = insights[:3]
                     except Exception:
@@ -597,7 +597,7 @@ Thought: [Your final thoughts before coding]
             thought = self.llm.generate(
                 thinking_prompt,
                 system_instruction=agent.prompt,
-                temperature=temperature * 0.7
+                temperature=1.0
             ).strip()
 
             # Remove "Thought:" prefix if present
@@ -629,7 +629,7 @@ Output ONLY the code in ```python blocks.
         final_output = self.llm.generate(
             final_prompt,
             system_instruction=agent.prompt,
-            temperature=temperature * 0.9
+            temperature=1.0
         )
 
         return final_output
@@ -777,7 +777,7 @@ Be concise. Only output Thought and Action.
             thought_action = self.llm.generate(
                 thought_prompt,
                 system_instruction=agent.prompt,
-                temperature=temperature * 0.8
+                temperature=1.0
             )
 
             # Parse thought and action
@@ -928,7 +928,7 @@ Focus on methods, findings, or techniques that could be applied."""
         task: str,
         critic_agent: Optional[Agent] = None,
         num_iterations: int = 2,
-        temperature: float = 0.7,
+        temperature: float = 1.0,
         use_react: bool = False,
         use_react_coding: bool = False
     ) -> str:
@@ -1005,7 +1005,7 @@ Be brief but specific.
                 critique = self.llm.generate(
                     critique_prompt,
                     system_instruction=critic_agent.prompt,
-                    temperature=temperature * 0.8
+                    temperature=1.0
                 )
 
                 self.add_message(critic_agent.title, critique)
