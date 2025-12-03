@@ -237,6 +237,7 @@ class ExperimentOrchestrator:
                 code=implementation,
                 results=results,
                 metrics=metrics,
+                output_analysis=output_analysis,
             )
 
             # Log reflection event
@@ -1252,8 +1253,13 @@ Output ONLY the complete Python code in ```python``` blocks.
         self,
         approach: str,
         code: str,
+    def _reflect_on_iteration(
+        self,
+        approach: str,
+        code: str,
         results: Dict[str, Any],
         metrics: Dict[str, float],
+        output_analysis: Optional[OutputAnalysis] = None,
     ) -> str:
         """
         Generate self-reflection on iteration (Reflexion: Shinn et al.)
@@ -1266,16 +1272,35 @@ Output ONLY the complete Python code in ```python``` blocks.
             code: Implementation
             results: Execution results
             metrics: Extracted metrics
+            output_analysis: Semantic analysis of output (optional)
 
         Returns:
             Reflection text with structured sections
         """
-        # Prepare output for reflection (summarize if too long)
-        output = results.get('output', '')
-        if len(output) > 2000:
-            output_preview = output[:2000] + "\n... (truncated)"
+        # Prepare output section
+        # If we have analysis, we rely on it and skip raw output to save context/noise.
+        # If no analysis, we fall back to raw output.
+        output_section = ""
+        if output_analysis:
+            output_section = f"""
+## Execution Analysis (Automated)
+**Summary:** {output_analysis.raw_summary}
+
+**Key Observations:**
+{chr(10).join([f"- {obs}" for obs in output_analysis.key_observations])}
+"""
         else:
-            output_preview = output
+            # Fallback: Show raw output if no analysis available
+            output = results.get('output', '')
+            if len(output) > 5000:
+                output_preview = output[:5000] + "\n... (truncated)"
+            else:
+                output_preview = output
+            
+            output_section = f"""
+## Execution Output (Raw)
+{output_preview}
+"""
 
         error_section = ""
         if not results.get('success'):
@@ -1284,7 +1309,7 @@ Output ONLY the complete Python code in ```python``` blocks.
 {results.get('error', 'Unknown error')}
 
 ## Traceback
-{results.get('traceback', 'No traceback available')[:500]}
+{results.get('traceback', 'No traceback available')[:1000]}
 """
 
         history_section = ""
@@ -1298,6 +1323,21 @@ Output ONLY the complete Python code in ```python``` blocks.
         improvement_text = ""
         if len(self.iteration_records) > 0:
             last_record = self.iteration_records[-1]
+            prev_metric = last_record.metrics.get(list(metrics.keys())[0]) if metrics else None
+            
+        task = f"""
+Reflect on this iteration and extract learnings.
+
+## Approach
+{approach}
+
+{output_section}
+{error_section}
+{history_section}
+
+## Metrics
+{metrics}
+"""
             if self.target_metric in last_record.metrics:
                 prev_metric = last_record.metrics[self.target_metric]
                 current_metric = metrics.get(self.target_metric)

@@ -103,15 +103,17 @@ Return a JSON object with:
   "observations": ["key observation 1", "key observation 2"]
 }
 
-For observations, identify issues like:
-- Overfitting (train vs validation gap)
-- Data leakage
-- Convergence problems
-- Class imbalance issues
-- Memory issues
-- Performance bottlenecks
+For observations, extract factual evidence from the logs, such as:
+- Specific metric gaps (e.g., "Train accuracy 0.99 vs Test accuracy 0.50")
+- Explicit warning messages (e.g., "ConvergenceWarning: lbfgs failed to converge")
+- Data shape mismatches (e.g., "Found input variables with inconsistent numbers of samples")
+- Class distribution stats (e.g., "Class 0: 1000, Class 1: 10")
+- Null value counts
+- Execution time anomalies
 
-Only include observations that are clearly evident in the output.
+DO NOT diagnose or interpret (e.g., do not say "Model is overfitting").
+DO NOT offer solutions.
+Report ONLY what is explicitly present in the text.
 """
         return prompt
     
