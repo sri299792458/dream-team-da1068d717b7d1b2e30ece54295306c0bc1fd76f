@@ -987,25 +987,57 @@ Rules:
         last_metric: float,
         improved: bool,
         reflection_text: str,
-        iteration: int
+        iteration: int,
+        reflection_obj: Optional[Any] = None,
+        reflection_memory: Optional[Any] = None  # NEW: Access to all past reflections
     ) -> None:
         """
         Refine the concept space based on latest iteration learnings.
-        
+
         Called after each iteration to dynamically evolve which concepts
         matter based on what the team actually tried and what the PI reflected on.
+
+        Args:
+            reflection_obj: Optional parsed Reflection object with key_insights and dead_ends
+            reflection_memory: Optional ReflectionMemory with all past reflections
         """
         if not self._concept_space or not self.team_state or iteration == 0:
             return
-        
+
         # Format current concepts with coverage
         current_concepts_str = "\n".join([
             f"{name}: importance={c.importance:.2f}, coverage={self.team_state.team_coverage().get(name, 0):.2f}"
             for name, c in self._concept_space.concepts.items()
         ])
-        
-        # Get reflection snippet (increased from 300 to 600 chars)
-        reflection_snippet = reflection_text[:600] + "..." if len(reflection_text) > 600 else reflection_text
+
+        # Build reflection context - include past reflections for trajectory
+        reflection_context = ""
+
+        # Past reflections (last 2-3 for context)
+        if reflection_memory and hasattr(reflection_memory, 'reflections') and len(reflection_memory.reflections) > 1:
+            reflection_context += "Recent Past Learnings:\n"
+            for ref in reflection_memory.reflections[-3:-1]:  # Last 3, excluding current
+                reflection_context += f"\nIteration {ref.iteration}:\n"
+                if ref.key_insights:
+                    for insight in ref.key_insights[:2]:
+                        reflection_context += f"  • {insight}\n"
+                if ref.dead_ends:
+                    for de in ref.dead_ends[:2]:
+                        reflection_context += f"  ✗ Dead end: {de}\n"
+            reflection_context += "\n"
+
+        # Current reflection
+        reflection_context += "Latest Iteration Reflection:\n"
+        if reflection_obj and hasattr(reflection_obj, 'key_insights') and hasattr(reflection_obj, 'dead_ends'):
+            if reflection_obj.key_insights:
+                for insight in reflection_obj.key_insights[:5]:
+                    reflection_context += f"  • {insight}\n"
+            if reflection_obj.dead_ends:
+                for de in reflection_obj.dead_ends[:5]:
+                    reflection_context += f"  ✗ Dead end: {de}\n"
+        else:
+            # Fallback to raw text
+            reflection_context += reflection_text[:1500] + ("..." if len(reflection_text) > 1500 else "")
 
         prompt = f"""
 Identify 5-7 core technical concepts for this research problem.
@@ -1016,53 +1048,74 @@ Identify 5-7 core technical concepts for this research problem.
 ## Latest Iteration (#{iteration}):
 Tried: {last_approach[:800]}
 Result: {target_metric} = {last_metric:.4f} ({'improved' if improved else 'no improvement'})
-PI noted: {reflection_snippet}
+
+## Reflections:
+{reflection_context}
 
 ## Current Concepts:
 {current_concepts_str}
 
 ## Task:
 What expertise areas matter MOST for this specific problem?
+Consider what dead ends have been identified and focus on unexplored concepts.
 
 Output (one per line):
 concept_name | importance (1-3)
 
 Keep concepts that remain relevant.
 Add concepts that emerged as important.
-Remove concepts (importance=0) that proved irrelevant.
+Remove concepts (importance=0) that proved irrelevant or are dead ends.
 """.strip()
         
         raw = self.llm.generate(prompt, temperature=0.2)
         new_concepts: Dict[str, Concept] = {}
-        
+
         for line in raw.splitlines():
             line = line.strip()
-            if not line or line.startswith("#"):
+
+            # Skip empty lines, comments, and markdown headers
+            if not line or line.startswith("#") or line.startswith("**") or line.startswith("##"):
                 continue
+
+            # Skip lines without pipe separator (likely headers/explanations)
+            if "|" not in line:
+                continue
+
             parts = [p.strip() for p in line.split("|")]
-            
             name = parts[0]
+
+            # Validate and clean concept name
             if not name:
                 continue
-            
+
+            # Remove markdown formatting if present
+            name = name.replace("**", "").replace("##", "").replace("*", "").strip()
+
+            # Skip if name contains invalid characters or is still malformed
+            if not name or any(char in name for char in [":", "!", "?"]) or name.startswith("-"):
+                continue
+
+            # Convert to snake_case-friendly format
+            name = name.lower().replace(" ", "_").replace("-", "_")
+
             importance = 2.0
             if len(parts) >= 2:
                 try:
                     importance = float(parts[1])
                 except ValueError:
                     importance = 2.0
-            
+
             # Skip if marked for removal
             if importance <= 0:
                 continue
-            
+
             new_concepts[name] = Concept(
                 name=name,
                 importance=importance,
                 category=ConceptCategory.DOMAIN,
                 source="refinement",
             )
-            
+
             if len(new_concepts) >= 7:
                 break
         

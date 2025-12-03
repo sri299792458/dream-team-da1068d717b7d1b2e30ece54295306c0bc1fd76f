@@ -290,7 +290,9 @@ class ExperimentOrchestrator:
                     last_metric=metrics.get(target_metric, 0.0),
                     improved=improved,
                     reflection_text=reflection,
-                    iteration=self.iteration
+                    iteration=self.iteration,
+                    reflection_obj=reflection_obj,
+                    reflection_memory=self.reflection_memory
                 )
 
             # Step 7: update agents' KnowledgeBases from semantic state
@@ -1238,9 +1240,10 @@ Output ONLY the complete Python code in ```python``` blocks.
                 pass
 
         # Try to find target metric in variables if not in metrics
+        # CRITICAL: Use exact match to avoid false positives (e.g., 'mae' matching 'mae_heuristic')
         if target_metric not in metrics:
             for key, value in results.get('variables', {}).items():
-                if target_metric in key.lower():
+                if key.lower() == target_metric.lower():  # Exact match only
                     try:
                         # Handle arrays (take mean)
                         if hasattr(value, '__iter__') and not isinstance(value, str):
@@ -1328,8 +1331,46 @@ Output ONLY the complete Python code in ```python``` blocks.
         if not improvement_text and prev_metric is None:
             improvement_text = "(baseline)"
         
-        reflection_prompt = f"""You are the Principal Investigator reviewing Iteration {self.iteration} of this research experiment.
+        # Format all metrics for display
+        metrics_display = ""
+        if metrics:
+            metrics_display = "\n**Metrics extracted from THIS iteration:**\n"
+            for k, v in metrics.items():
+                is_target = " (TARGET)" if k == self.target_metric else ""
+                metrics_display += f"- {k}: {v:.4f}{is_target}\n"
+            # Add improvement note for target metric
+            if self.target_metric in metrics:
+                metrics_display += f"\n{improvement_text}\n"
+        else:
+            metrics_display = "\n**No metrics were extracted from this iteration's execution.**\n"
 
+        # Include context from past reflections for continuity
+        past_context = ""
+        if len(self.reflection_memory.reflections) > 0:
+            past_context = "\n## Context from Past Iterations\n\n"
+            # Show summary of recent iterations (last 2-3)
+            recent_reflections = self.reflection_memory.reflections[-3:]
+            for ref in recent_reflections:
+                past_context += f"### Iteration {ref.iteration}\n"
+                if ref.key_insights:
+                    past_context += "**Key Insights:**\n"
+                    for insight in ref.key_insights[:2]:  # Top 2 insights
+                        past_context += f"- {insight}\n"
+                if ref.dead_ends:
+                    past_context += "**Dead Ends:**\n"
+                    for de in ref.dead_ends[:2]:  # Top 2 dead ends
+                        past_context += f"- {de}\n"
+                past_context += "\n"
+
+            # Also show recent metric trajectory for context
+            past_context += "**Recent Metric Trajectory:**\n"
+            for record in self.iteration_records[-3:]:
+                if self.target_metric in record.metrics:
+                    past_context += f"- Iteration {record.iteration}: {self.target_metric} = {record.metrics[self.target_metric]:.4f}\n"
+            past_context += "\n"
+
+        reflection_prompt = f"""You are the Principal Investigator reviewing Iteration {self.iteration} of this research experiment.
+{past_context}
 ## Hypothesis (What we planned to test)
 {approach}
 
@@ -1340,7 +1381,7 @@ Output ONLY the complete Python code in ```python``` blocks.
 
 ## Observations (What happened)
 Execution: {'Successful' if results.get('success') else 'Failed'}
-Target metric ({self.target_metric}): {metrics.get(self.target_metric, 'N/A')} {improvement_text}
+{metrics_display}
 {output_section}
 {error_section}
 {history_section}
@@ -1349,7 +1390,7 @@ Target metric ({self.target_metric}): {metrics.get(self.target_metric, 'N/A')} {
 
 ## Reflection
 
-As the research lead, analyze this iteration scientifically:
+As the research lead, analyze this iteration scientifically, taking into account the trajectory of past iterations:
 
 ### 1. Understanding
 What did this experiment teach us about the problem?
@@ -1577,15 +1618,25 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
             f"(min: {decision.debug_info.get('min_size', '?')}, "
             f"max: {decision.debug_info.get('max_size', '?')})"
         )
-        print(f"   Coverage gaps: {len(decision.debug_info.get('gaps', []))} concepts below threshold")
-        if decision.debug_info.get("gaps"):
-            print(f"      → {', '.join(decision.debug_info['gaps'][:5])}")
+        # Show coverage with more detail
+        coverage = decision.debug_info.get('coverage', {})
+        gaps = decision.debug_info.get('gaps', [])
+
+        print(f"   Coverage gaps: {len(gaps)} concepts below threshold (< {self.evolution_agent.gap_threshold:.2f})")
+        if gaps:
+            print("      → Gap details:")
+            for gap in gaps[:5]:
+                cov_val = coverage.get(gap, 0.0)
+                print(f"         • {gap}: coverage = {cov_val:.2f}")
+            if len(gaps) > 5:
+                print(f"         ... and {len(gaps) - 5} more")
 
         if decision.new_agent_specs:
             print(f"   🔔 Proposed new agents: {len(decision.new_agent_specs)}")
             for spec in decision.new_agent_specs:
                 print(f"      - {spec.kind.upper()}: {spec.title}")
-                print(f"        Focus: {', '.join(spec.focus_concepts[:3])}")
+                print(f"        Focus concepts: {', '.join(spec.focus_concepts)}")
+                print(f"        Expertise: {spec.expertise[:100]}{'...' if len(spec.expertise) > 100 else ''}")
 
         if decision.agents_to_delete:
             print(f"   🔔 Proposed deletions: {len(decision.agents_to_delete)}")

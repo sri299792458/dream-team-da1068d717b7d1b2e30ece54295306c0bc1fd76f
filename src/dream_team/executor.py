@@ -141,13 +141,26 @@ class CodeExecutor:
                 result['original_output_length'] = len(full_output)
 
             # Extract NEW or MODIFIED variables created during execution
-            result['variables'] = {
-                k: v for k, v in exec_namespace.items()
-                if not k.startswith('_') and (
-                    k not in initial_state or  # New variable
-                    id(v) != initial_state[k]  # Modified variable (re-assigned)
-                )
-            }
+            # Use both ID check AND value check for robustness against interned objects
+            result['variables'] = {}
+            for k, v in exec_namespace.items():
+                if k.startswith('_'):
+                    continue
+                if k not in initial_state:
+                    # Definitely new
+                    result['variables'][k] = v
+                elif id(v) != initial_state[k]:
+                    # Different object ID = modified
+                    result['variables'][k] = v
+                else:
+                    # Same ID - could be interned/cached object, check if it was explicitly assigned
+                    # For numeric types, do a value comparison as well
+                    old_val = self.data_context.get(k)
+                    if old_val is not None and isinstance(v, (int, float, np.number)) and isinstance(old_val, (int, float, np.number)):
+                        # If values are different, it was modified (even if same ID due to interning)
+                        if not np.isclose(float(v), float(old_val), rtol=1e-9):
+                            result['variables'][k] = v
+                    # Note: We skip variables with same ID and same value to avoid false positives
 
             # Extract metrics ONLY from new/modified variables
             # This prevents stale metrics from previous iterations from leaking in
