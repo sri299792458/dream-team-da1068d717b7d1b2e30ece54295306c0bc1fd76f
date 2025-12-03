@@ -1,10 +1,11 @@
 """
 LLM interface module for Dream Team framework.
 
-Provides a wrapper for Gemini API with caching and error handling.
+Provides a wrapper for Gemini API (google-genai) with caching and error handling.
 """
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from typing import List, Dict, Optional
 import os
 import time
@@ -27,13 +28,11 @@ class GeminiLLM:
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY not found in environment variables")
 
-        genai.configure(api_key=self.api_key)
+        self.client = genai.Client(api_key=self.api_key)
         self.model_name = model_name
         self.temperature = temperature
         self.max_retries = max_retries
         self.thinking_level = thinking_level
-
-        self.model = genai.GenerativeModel(model_name)
 
         # Simple stats
         self.total_calls = 0
@@ -52,35 +51,42 @@ class GeminiLLM:
         temp = temperature if temperature is not None else self.temperature
         think = thinking_level if thinking_level is not None else self.thinking_level
 
+        # Map string thinking level to enum/string expected by SDK
+        # "low" -> "THINKING_LEVEL_LOW" or just "LOW" usually works, but let's be safe with string
+        # The new SDK often accepts strings for enums.
+        # Based on research, it's "LOW" or "HIGH" (case insensitive usually)
+        
+        # Ensure thinking level is valid
+        if think.lower() not in ["low", "high"]:
+            think = "low" # Default fallback
+
         for attempt in range(self.max_retries):
             try:
-                # Create model with system instruction if provided
-                if system_instruction:
-                    model = genai.GenerativeModel(
-                        self.model_name,
-                        system_instruction=system_instruction
-                    )
-                else:
-                    model = self.model
-
                 # Configure generation
-                generation_config = {
+                config_args = {
                     "temperature": temp,
-                    "thinking_level": think,
+                    "thinking_config": types.ThinkingConfig(
+                        include_thoughts=False, # We usually don't want thoughts in output unless requested
+                        thinking_level=think.upper()
+                    )
                 }
 
                 if response_format == "json":
-                    generation_config["response_mime_type"] = "application/json"
+                    config_args["response_mime_type"] = "application/json"
+                
+                if system_instruction:
+                    config_args["system_instruction"] = system_instruction
 
-                response = model.generate_content(
-                    prompt,
-                    generation_config=generation_config
+                config = types.GenerateContentConfig(**config_args)
+
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                    config=config
                 )
 
                 self.total_calls += 1
-                # Note: Gemini API doesn't easily expose token counts like OpenAI
-                # Could estimate with len(prompt.split()) but not accurate
-
+                
                 return response.text
 
             except Exception as e:
@@ -125,27 +131,42 @@ class GeminiLLM:
         """Multi-turn chat (for meetings)"""
         temp = temperature if temperature is not None else self.temperature
         think = thinking_level if thinking_level is not None else self.thinking_level
+        
+        if think.lower() not in ["low", "high"]:
+            think = "low"
 
         # Convert to Gemini format
         # messages format: [{"role": "user"/"assistant", "content": "..."}]
-
-        chat = self.model.start_chat(history=[])
-
-        for msg in messages[:-1]:  # All but last
+        
+        # The new SDK chat interface is slightly different.
+        # It's better to use generate_content with a list of contents for stateless, 
+        # or maintain a chat session.
+        # Given the usage pattern, we are often passing a full history.
+        
+        # Convert history
+        gemini_contents = []
+        for msg in messages[:-1]:
             role = "user" if msg["role"] == "user" else "model"
-            chat.history.append({
-                "role": role,
-                "parts": [msg["content"]]
-            })
+            gemini_contents.append(types.Content(
+                role=role,
+                parts=[types.Part(text=msg["content"])]
+            ))
+            
+        # Create chat session
+        chat = self.client.chats.create(
+            model=self.model_name,
+            history=gemini_contents,
+            config=types.GenerateContentConfig(
+                temperature=temp,
+                thinking_config=types.ThinkingConfig(
+                    include_thoughts=False,
+                    thinking_level=think.upper()
+                )
+            )
+        )
 
         # Send last message
-        response = chat.send_message(
-            messages[-1]["content"],
-            generation_config={
-                "temperature": temp,
-                "thinking_level": think
-            }
-        )
+        response = chat.send_message(messages[-1]["content"])
 
         self.total_calls += 1
         return response.text
