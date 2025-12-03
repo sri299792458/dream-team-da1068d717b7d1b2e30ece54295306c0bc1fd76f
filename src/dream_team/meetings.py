@@ -133,7 +133,7 @@ Write your FINAL SYNTHESIS based on your reasoning.
 Requirements:
 - Make FINAL DECISIONS. Do not ask clarifying questions.
 - Be specific: name the exact methods, features, or approaches to implement.
-- You should only convey what has to be implemented clearly, the code will be written by the coding agent.
+- **Important**: The code will be written by the coding agent, your job is to only convey what has to be implemented clearly.
 
 Output 1-2 focused paragraphs.
 """
@@ -300,6 +300,10 @@ Rules:
 """
 
         metadata = self.llm.generate_json(metadata_prompt, temperature=1.0)
+
+        # Validate metadata is a dict (LLM might return a list or other type)
+        if not isinstance(metadata, dict):
+            metadata = {}
 
         # Return team lead's synthesis as the main summary
         return {

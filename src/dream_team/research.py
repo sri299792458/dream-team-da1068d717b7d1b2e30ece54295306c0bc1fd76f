@@ -276,6 +276,10 @@ Respond in JSON format:
                 # Assuming llm.generate_json exists in your LLM wrapper
                 analysis = self.llm.generate_json(analysis_prompt, temperature=1.0)
 
+                # Validate analysis is a dict (LLM might return a list or other type)
+                if not isinstance(analysis, dict):
+                    analysis = {}
+
                 paper = Paper(
                     title=result.title,
                     authors=result.authors,

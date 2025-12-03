@@ -102,8 +102,8 @@ class GeminiLLM:
         system_instruction: Optional[str] = None,
         temperature: Optional[float] = None,
         thinking_level: Optional[str] = None
-    ) -> Dict:
-        """Generate JSON response"""
+    ):
+        """Generate JSON response - returns Dict, List, or any valid JSON type"""
         response_text = self.generate(
             prompt,
             system_instruction=system_instruction,
@@ -116,7 +116,8 @@ class GeminiLLM:
             return json.loads(response_text)
         except json.JSONDecodeError:
             # Fallback: try to extract JSON from markdown code blocks
-            json_match = re.search(r'```json\s*(\{.*?\})\s*```', response_text, re.DOTALL)
+            # Support both arrays and objects
+            json_match = re.search(r'```json\s*([\[\{].*?[\]\}])\s*```', response_text, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group(1))
             else:
