@@ -46,18 +46,15 @@ class Meeting:
 class TeamMeeting(Meeting):
     """Multi-agent team discussion"""
 
-    def _react_synthesis_task(self, team_lead, agenda: str, context: str, temperature: float, is_final: bool, max_steps: int = 3) -> str:
+    def _react_synthesis_task(self, team_lead, agenda: str, context: str, temperature: float, is_final: bool, max_steps: int = 2) -> str:
         """
         ReAct loop for PI synthesis: iterative reasoning to synthesize team proposals.
 
-        Pattern:
-        1. Thought: Analyze what each team member proposed
-        2. Thought: Identify conflicts, dependencies, priorities
-        3. Thought: Formulate clear action plan for coding agent
-        4. Final Answer: Write decisive synthesis
+        Simplified to 2 generic steps:
+        1. Initial analysis - understand what was proposed
+        2. Refinement - organize into coherent action plan
 
         This is internal reasoning only - no external search.
-        Used for team lead to think through synthesis step-by-step.
         """
         print(f"   🧠 {team_lead.title} using ReAct reasoning for synthesis...")
 
@@ -71,7 +68,7 @@ class TeamMeeting(Meeting):
                     f"Step {i+1}: {thought}" for i, thought in enumerate(reasoning_steps)
                 ])
 
-            # Iterative thinking prompts
+            # Generic prompts that adapt to step number
             if step == 0:
                 thinking_prompt = f"""You are synthesizing team proposals.
 
@@ -80,15 +77,15 @@ Agenda: {agenda}
 Discussion so far:
 {context}
 
-Think step-by-step about WHAT WAS PROPOSED:
-- What did each team member propose?
-- What are the key ideas?
-- Are there common themes?
+Think step-by-step about the team's proposals:
+- What are the key ideas and approaches suggested?
+- Are there common themes or complementary ideas?
+- What seems most promising for the goal?
 
 Output only:
-Thought: [Your analysis of team proposals]
+Thought: [Your analysis]
 """
-            elif step == 1:
+            else:  # step >= 1
                 thinking_prompt = f"""You are refining your synthesis.
 
 Agenda: {agenda}
@@ -97,30 +94,13 @@ Discussion so far:
 {context}
 {previous_thoughts}
 
-Think step-by-step about PRIORITIES AND DEPENDENCIES:
-- Are there any conflicts between proposals?
-- What needs to be done first?
-- What's most important for the goal?
-
-Output only:
-Thought: [Your thinking about priorities and dependencies]
-"""
-            else:
-                thinking_prompt = f"""You are finalizing your synthesis.
-
-Agenda: {agenda}
-
-Discussion so far:
-{context}
-{previous_thoughts}
-
-Think step-by-step about the ACTION PLAN:
+Refine your thinking:
+- How should these ideas be organized into a coherent plan?
+- What are the priorities and dependencies?
 - What specific steps should the coding agent take?
-- In what order?
-- Any important details to emphasize?
 
 Output only:
-Thought: [Your final thoughts on the action plan]
+Thought: [Your refined thinking]
 """
 
             thought = self.llm.generate(
@@ -245,6 +225,15 @@ Keep it concise (1-2 paragraphs).
                     response = self._optional_react_proposal(member, agenda, context, temperature)
                 else:
                     # No research API available - simple proposal
+                    
+                    # Inject KB context
+                    kb_data = member.knowledge_base.collect_for_intent("plan_next_iteration")
+                    kb_context = ""
+                    if kb_data["patterns"]:
+                        kb_context += "\nYour Past Successes:\n" + "\n".join([f"- {p}" for p in kb_data["patterns"]])
+                    if kb_data["techniques"]:
+                        kb_context += "\nYour Mastered Techniques:\n" + "\n".join([f"- {t}" for t in kb_data["techniques"]])
+                        
                     response = self.llm.generate(
                         f"""You are participating in a team meeting.
 
@@ -252,8 +241,9 @@ Agenda: {agenda}
 
 Discussion so far:
 {context}
+{kb_context}
 
-Provide your input as {member.title}. Draw on your expertise.
+Provide your input as {member.title}. Draw on your expertise and past learnings.
 Keep it concise (1-2 paragraphs).
 """,
                         system_instruction=member.prompt,
@@ -331,12 +321,22 @@ Provide in JSON format:
         """
 
         # Initial proposal with optional search
+    
+        # Inject KB context
+        kb_data = agent.knowledge_base.collect_for_intent("plan_next_iteration")
+        kb_context = ""
+        if kb_data["patterns"]:
+            kb_context += "\nYour Past Successes:\n" + "\n".join([f"- {p}" for p in kb_data["patterns"]])
+        if kb_data["techniques"]:
+            kb_context += "\nYour Mastered Techniques:\n" + "\n".join([f"- {t}" for t in kb_data["techniques"]])
+
         initial_prompt = f"""You are {agent.title} participating in a team meeting.
 
 Agenda: {agenda}
 
 Discussion so far:
 {context}
+{kb_context}
 
 You have access to a paper search tool if you need it. Based on the problem:
 - If you already have sufficient expertise and knowledge, just provide your proposal directly

@@ -17,91 +17,79 @@ from typing import List, Optional
 @dataclass
 class Reflection:
     """
-    Structured reflection on an iteration (based on Reflexion paper by Shinn et al.)
+    Reflection on an iteration - scientific analysis of what was learned.
 
-    After each iteration, the team lead reflects on what happened
-    and extracts structured learnings.
+    After each iteration, the PI reflects on what happened and captures
+    learnings to guide the team's future decisions.
 
     Workflow:
-        execute → metrics → REFLECT → store learnings → next iteration
+        execute → metrics → REFLECT → store learnings → team uses in planning
     """
     iteration: int
-    what_worked: List[str] = field(default_factory=list)
-    what_failed: List[str] = field(default_factory=list)
-    why_failed: str = ""
-    suggestions: List[str] = field(default_factory=list)
-    avoid: List[str] = field(default_factory=list)
+    raw_text: str  # Full reflection from PI
+    key_insights: List[str] = field(default_factory=list)  # Extracted insights
+    dead_ends: List[str] = field(default_factory=list)  # What to avoid
 
-    @classmethod
+    @classmethod  
     def from_text(cls, iteration: int, reflection_text: str) -> "Reflection":
         """
-        Parse reflection text into structured format.
-
-        Expects text with sections marked by **Worked**, **Failed**, **Why**, etc.
+        Parse reflection text and extract key insights.
 
         Args:
             iteration: Iteration number
             reflection_text: LLM-generated reflection text
 
         Returns:
-            Parsed Reflection object
+            Reflection object with raw text and extracted insights
         """
-        worked = []
-        failed = []
-        why = ""
-        suggestions = []
-        avoid = []
-
+        # Store raw text
+        raw = reflection_text.strip()
+        
+        # Extract key insights (simple heuristic: look for patterns)
+        insights = []
+        dead_ends = []
+        
         current_section = None
-
-        for line in reflection_text.split('\n'):
+        lines = raw.split('\n')
+        
+        for line in lines:
             line = line.strip()
-
-            if line.startswith('**Worked**'):
-                current_section = 'worked'
-                content = line.split(':', 1)[1].strip() if ':' in line else ""
+            if not line:
+                continue
+                
+            # Detect sections
+            line_lower = line.lower()
+            if 'understanding' in line_lower or 'teach us' in line_lower:
+                current_section = 'insights'
+            elif 'attribution' in line_lower or 'drove' in line_lower:
+                current_section = 'insights'
+            elif 'constraints' in line_lower or 'limitations' in line_lower:
+                current_section = 'insights'
+            elif 'dead end' in line_lower or 'rule out' in line_lower:
+                current_section = 'dead_ends'
+            
+            # Extract bullet points
+            if line.startswith(('-', '•', '*', '→')):
+                content = line.lstrip('-•*→').strip()
                 if content:
-                    worked.append(content)
-            elif line.startswith('**Failed**'):
-                current_section = 'failed'
-                content = line.split(':', 1)[1].strip() if ':' in line else ""
-                if content:
-                    failed.append(content)
-            elif line.startswith('**Why**'):
-                current_section = 'why'
-                why = line.split(':', 1)[1].strip() if ':' in line else ""
-            elif line.startswith('**Try next**') or line.startswith('**Try Next**'):
-                current_section = 'suggestions'
-                content = line.split(':', 1)[1].strip() if ':' in line else ""
-                if content:
-                    suggestions.append(content)
-            elif line.startswith('**Avoid**'):
-                current_section = 'avoid'
-                content = line.split(':', 1)[1].strip() if ':' in line else ""
-                if content:
-                    avoid.append(content)
-            elif line.startswith(('-', '•', '*')) and current_section:
-                # Bullet point - add to current section
-                content = line.lstrip('-•*').strip()
-                if not content:
-                    continue
-
-                if current_section == 'worked':
-                    worked.append(content)
-                elif current_section == 'failed':
-                    failed.append(content)
-                elif current_section == 'suggestions':
-                    suggestions.append(content)
-                elif current_section == 'avoid':
-                    avoid.append(content)
-
+                    if current_section == 'dead_ends':
+                        dead_ends.append(content)
+                    elif current_section == 'insights':
+                        insights.append(content)
+            # Also capture numbered lists
+            elif len(line) > 2 and line[0].isdigit() and line[1] in '.):':
+                content = line[2:].strip()
+                if content and current_section:
+                    if current_section == 'dead_ends':
+                        dead_ends.append(content)
+                    elif current_section == 'insights':
+                        insights.append(content)
+        
         return cls(
             iteration=iteration,
-            what_worked=worked,
-            what_failed=failed,
-            why_failed=why,
-            suggestions=suggestions,
-            avoid=avoid
+            raw_text=raw,
+            key_insights=insights if insights else ["See raw reflection text"],
+            dead_ends=dead_ends
         )
 
 
@@ -142,38 +130,31 @@ class ReflectionMemory:
         # Get recent reflections
         recent = self.reflections[-num_recent:]
 
-        context = "## Learnings from Past Reflections\n\n"
+        context = "## Recent Experiment Reflections\n\n"
 
-        # Aggregate what's worked
-        all_worked = []
+        # Show each recent reflection
         for r in recent:
-            all_worked.extend(r.what_worked)
-
-        if all_worked:
-            context += "### What Has Worked:\n"
-            # Show most recent 5
-            for item in all_worked[-5:]:
-                context += f"- {item}\n"
-
-        # Aggregate what to avoid
-        all_avoid = []
-        for r in recent:
-            all_avoid.extend(r.avoid)
-
-        if all_avoid:
-            context += "\n### What to Avoid:\n"
-            for item in all_avoid[-5:]:
-                context += f"- {item}\n"
-
-        # Recent suggestions
-        all_suggestions = []
-        for r in recent:
-            all_suggestions.extend(r.suggestions)
-
-        if all_suggestions:
-            context += "\n### Suggestions to Try:\n"
-            for item in all_suggestions[-5:]:
-                context += f"- {item}\n"
+            context += f"### Iteration {r.iteration}\n"
+            
+            # Show key insights if extracted
+            if r.key_insights and r.key_insights != ["See raw reflection text"]:
+                context += "**Key Insights:**\n"
+                for insight in r.key_insights[:3]:  # Top 3
+                    context += f"- {insight}\n"
+                context += "\n"
+            
+            # Show dead ends
+            if r.dead_ends:
+                context += "**Dead Ends:**\n"
+                for dead_end in r.dead_ends[:3]:  # Top 3
+                    context += f"- {dead_end}\n"
+                context += "\n"
+            
+            # If no structured insights extracted, show snippet of raw text
+            if not r.key_insights or r.key_insights == ["See raw reflection text"]:
+                # Show first 200 chars of reflection
+                snippet = r.raw_text[:200] + "..." if len(r.raw_text) > 200 else r.raw_text
+                context += f"_{snippet}_\n\n"
 
         return context
 
@@ -191,29 +172,31 @@ class ReflectionMemory:
         """
         relevant = []
 
-        # Simple keyword matching
+        # Simple keyword matching against raw reflection text
         current_error_lower = current_error.lower()
 
         for r in self.reflections:
-            # Check if any failure description overlaps with current error
-            for fail in r.what_failed:
-                if fail.lower() in current_error_lower or current_error_lower in fail.lower():
-                    relevant.append(r)
-                    break
+            # Check if raw text mentions similar error or dead ends mention it
+            if current_error_lower in r.raw_text.lower():
+                relevant.append(r)
+            elif any(current_error_lower in de.lower() for de in r.dead_ends):
+                relevant.append(r)
 
         if not relevant:
             return ""
 
-        context = "## Past Reflections on Similar Failures\n\n"
+        context = "## Past Reflections on Similar Issues\n\n"
 
         # Show most recent 3
         for r in relevant[-3:]:
             context += f"**Iteration {r.iteration}:**\n"
-            context += f"- Failed: {', '.join(r.what_failed)}\n"
-            if r.why_failed:
-                context += f"- Why: {r.why_failed}\n"
-            if r.suggestions:
-                context += f"- Suggested: {', '.join(r.suggestions)}\n"
-            context += "\n"
+            
+            # Show relevant dead ends
+            if r.dead_ends:
+                context += f"Dead ends identified: {', '.join(r.dead_ends[:2])}\n"
+            
+            # Show snippet of raw reflection
+            snippet = r.raw_text[:200] + "..." if len(r.raw_text) > 200 else r.raw_text
+            context += f"_{snippet}_\n\n"
 
         return context

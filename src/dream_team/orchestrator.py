@@ -274,6 +274,29 @@ class ExperimentOrchestrator:
             self.iteration_records.append(iter_record)
             self.context_builder.set_iterations(self.iteration_records)
 
+            # Step 6.5: Refine concept space based on iteration learnings
+            if self.evolution_agent is not None and self.iteration > 0:
+                # Determine if metric improved
+                improved = False
+                if len(self.iteration_records) > 1:
+                    prev_metric = self.iteration_records[-2].metrics.get(target_metric)
+                    curr_metric = metrics.get(target_metric)
+                    if prev_metric is not None and curr_metric is not None:
+                        if minimize_metric:
+                            improved = curr_metric < prev_metric
+                        else:
+                            improved = curr_metric > prev_metric
+                
+                self.evolution_agent.refine_concept_space(
+                    problem_statement=self.problem_statement,
+                    target_metric=target_metric,
+                    last_approach=approach,
+                    last_metric=metrics.get(target_metric, 0.0),
+                    improved=improved,
+                    reflection_text=reflection,
+                    iteration=self.iteration
+                )
+
             # Step 7: update agents' KnowledgeBases from semantic state
             self._update_agent_knowledge_from_iteration(
                 iter_record=iter_record,
@@ -1258,43 +1281,75 @@ Output ONLY the complete Python code in ```python``` blocks.
              for i, attempt in enumerate(results['execution_history'][:-1]):
                  history_section += f"Attempt {attempt['attempt']}:\nError: {attempt['error']}\nCode snippet: {attempt['code'][:200]}...\n\n"
 
-        reflection_prompt = f"""You are reviewing iteration {self.iteration} of this research experiment.
+        # Get previous metric for comparison
+        prev_metric = None
+        improvement_text = ""
+        if len(self.iteration_records) > 0:
+            last_record = self.iteration_records[-1]
+            if self.target_metric in last_record.metrics:
+                prev_metric = last_record.metrics[self.target_metric]
+                current_metric = metrics.get(self.target_metric)
+                if current_metric is not None and prev_metric is not None:
+                    if self.minimize_metric:
+                        improved = current_metric < prev_metric
+                    else:
+                        improved = current_metric > prev_metric
+                    
+                    if improved:
+                        improvement_text = f"(improved from {prev_metric:.4f})"
+                    else:
+                        improvement_text = f"(no improvement from {prev_metric:.4f})"
+        
+        if not improvement_text and prev_metric is None:
+            improvement_text = "(baseline)"
+        
+        # Get clean summary from output analyzer if available
+        output_summary = output_preview
+        if hasattr(self, 'output_analyzer') and results.get('success'):
+            # Use the last iteration record's output analysis if available
+            if len(self.iteration_records) > 0:
+                last_analysis = self.iteration_records[-1].output_analysis
+                if last_analysis.raw_summary:
+                    output_summary = last_analysis.raw_summary
+        
+        reflection_prompt = f"""You are the Principal Investigator reviewing Iteration {self.iteration} of this research experiment.
 
-## What Was Attempted
+## Hypothesis (What we planned to test)
 {approach}
 
-## Code Implementation
+## Experiment (What we implemented)
 ```python
-{code[:500]}...
+{code}
 ```
 
-## What Happened
-Success: {results.get('success')}
-Metrics: {metrics}
-
-## Execution Output
-{output_preview}
+## Observations (What happened)
+Execution: {'Successful' if results.get('success') else 'Failed'}
+Target metric ({self.target_metric}): {metrics.get(self.target_metric, 'N/A')} {improvement_text}
+{output_summary}
 {error_section}
 {history_section}
 
-## Reflection Task
-Analyze this iteration and extract concrete, actionable learnings.
+---
 
-Answer these questions:
-1. **What worked?** - Specific techniques, patterns, or approaches that succeeded
-2. **What failed?** - Specific mistakes, wrong assumptions, or bugs encountered
-3. **Why did it fail?** - Root cause analysis (not just symptoms)
-4. **What to try differently?** - Concrete suggestions for the next iteration
-5. **What to avoid?** - Dead ends or approaches that won't work for this problem
+## Reflection
 
-Be specific and actionable. Focus on insights the team can actually use.
+As the research lead, analyze this iteration scientifically:
 
-Format your response with these exact section headers:
-**Worked**: [what succeeded]
-**Failed**: [what didn't work]
-**Why**: [root cause]
-**Try next**: [specific suggestions]
-**Avoid**: [what not to do]
+### 1. Understanding
+What did this experiment teach us about the problem?
+What assumptions were validated or invalidated?
+
+### 2. Attribution  
+If results improved: What specifically drove the improvement?
+If results didn't improve or failed: What was the root cause? (Not symptoms - dig deep)
+
+### 3. Constraints Discovered
+What limitations of the data, approach, or problem did we encounter?
+
+### 4. Dead Ends
+What approaches can we now rule out and why?
+
+Write as if preparing brief notes for tomorrow's team meeting. Focus on insights that will help the team make better decisions, not prescriptive recommendations.
 """
 
         reflection = self.llm.generate(

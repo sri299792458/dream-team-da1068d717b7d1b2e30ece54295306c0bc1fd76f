@@ -5,7 +5,7 @@ Implements evolving agents with growing knowledge bases and mathematical state.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from datetime import datetime
 import json
 import numpy as np
@@ -303,6 +303,78 @@ Role: {self.role}
         agent.successful_contributions = stats.get("successful_contributions", 0)
 
         return agent
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert agent to dictionary (for event storage)"""
+        return {
+            "title": self.title,
+            "expertise": self.expertise,
+            "goal": self.goal,
+            "role": self.role,
+            "model": self.model,
+            "specialization_depth": self.specialization_depth,
+            "knowledge_base": self.knowledge_base.to_dict(),
+            "evolution_history": [
+                {
+                    "timestamp": s.timestamp,
+                    "title": s.title,
+                    "expertise": s.expertise,
+                    "role": s.role,
+                    "depth": s.specialization_depth,
+                    "trigger": s.trigger_reason,
+                    "gini": s.gini_coefficient,
+                    "max_depth": s.max_depth
+                }
+                for s in self.evolution_history
+            ],
+            "stats": {
+                "meetings_participated": self.meetings_participated,
+                "experiments_proposed": self.experiments_proposed,
+                "successful_contributions": self.successful_contributions
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Agent':
+        """Restore agent from dictionary (for event restoration)"""
+        agent = cls(
+            title=data["title"],
+            expertise=data["expertise"],
+            goal=data["goal"],
+            role=data["role"],
+            model=data.get("model", "gemini-2.5-flash"),
+            specialization_depth=data.get("specialization_depth", 0)
+        )
+
+        # Restore knowledge base
+        kb_data = data.get("knowledge_base", {})
+        agent.knowledge_base.domain_facts = kb_data.get("domain_facts", [])
+        agent.knowledge_base.techniques_mastered = kb_data.get("techniques", [])
+        agent.knowledge_base.error_insights = kb_data.get("error_insights", [])
+        agent.knowledge_base.successful_patterns = kb_data.get("successful_patterns", [])
+
+        for p_data in kb_data.get("papers", []):
+            paper = Paper(
+                title=p_data["title"],
+                authors=p_data.get("authors", []),
+                year=p_data.get("year", 2024),
+                abstract="",
+                key_findings=p_data.get("key_findings", []),
+                techniques=p_data.get("techniques", []),
+                relevance_score=p_data.get("relevance", 0.0),
+                applied=p_data.get("applied", False),
+                impact_notes=p_data.get("impact")
+            )
+            agent.knowledge_base.papers.append(paper)
+
+        # Restore stats
+        stats = data.get("stats", {})
+        agent.meetings_participated = stats.get("meetings_participated", 0)
+        agent.experiments_proposed = stats.get("experiments_proposed", 0)
+        agent.successful_contributions = stats.get("successful_contributions", 0)
+
+        return agent
+
 
 
 

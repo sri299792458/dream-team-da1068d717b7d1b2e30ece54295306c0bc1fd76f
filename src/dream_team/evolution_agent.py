@@ -438,74 +438,86 @@ class EvolutionAgent:
         self,
         problem_statement: str,
         target_metric: str,
-        max_concepts: int = 20,
-        column_schemas: Optional[Dict[str, List[str]]] = None,
-        techniques: Optional[List[str]] = None,
+        max_concepts: int = 7,
+        exploration_context: Optional[str] = None,
     ) -> ProblemConcepts:
         """
-        Define the problem space P by extracting key concepts and their importance
-        from multiple sources: LLM (domain), Schema (data), and Code (model).
+        Define the problem space P by extracting key domain concepts.
+        
+        Simplified to focus only on strategic domain concepts that drive
+        agent specialization, not mechanical schema or technique extraction.
+        
+        Args:
+            problem_statement: The research problem
+            target_metric: Metric being optimized
+            max_concepts: Maximum concepts to extract (default: 7)
+            exploration_context: Optional context from bootstrap exploration
+        
+        Returns:
+            ProblemConcepts with normalized weights
         """
-        domain = self._build_domain_concepts_from_llm(problem_statement, target_metric, max_concepts)
-        data = self._build_data_concepts_from_schema(column_schemas)
-        model = self._build_model_concepts_from_techniques(techniques)
+        domain = self._build_domain_concepts_from_llm(
+            problem_statement, 
+            target_metric, 
+            max_concepts,
+            exploration_context
+        )
 
-        all_concepts: Dict[str, Concept] = {}
-        for d in (domain, data, model):
-            for name, c in d.items():
-                if name in all_concepts:
-                    # keep max importance, prefer more specific category if needed
-                    existing = all_concepts[name]
-                    existing.importance = max(existing.importance, c.importance)
-                    # Could merge categories/sources here if needed
-                else:
-                    all_concepts[name] = c
-
-        if not all_concepts:
+        if not domain:
             # fallback: use target_metric name
-            all_concepts[target_metric.lower()] = Concept(
+            domain[target_metric.lower()] = Concept(
                 name=target_metric.lower(),
                 importance=3.0,
-                category=ConceptCategory.MODEL,
+                category=ConceptCategory.DOMAIN,
                 source="fallback",
             )
 
         # Normalize importance to get weights
-        weights = normalize_distribution({n: c.importance for n, c in all_concepts.items()})
+        weights = normalize_distribution({n: c.importance for n, c in domain.items()})
 
         for name, w in weights.items():
-            all_concepts[name].importance = w
+            domain[name].importance = w
 
         # Stash full ConceptSpace
-        self._concept_space = ConceptSpace(concepts=all_concepts)
+        self._concept_space = ConceptSpace(concepts=domain)
 
         # Build ProblemConcepts for compatibility
         return ProblemConcepts(
-            concept_weights={name: c.importance for name, c in all_concepts.items()}
+            concept_weights={name: c.importance for name, c in domain.items()}
         )
 
     def _build_domain_concepts_from_llm(
-        self, problem_statement: str, target_metric: str, max_concepts: int
+        self, 
+        problem_statement: str, 
+        target_metric: str, 
+        max_concepts: int,
+        exploration_context: Optional[str] = None
     ) -> Dict[str, Concept]:
+        """Extract domain concepts via LLM."""
+        context_section = ""
+        if exploration_context:
+            context_section = f"\n## Bootstrap Context:\n{exploration_context[:500]}\n"
+        
         prompt = f"""
-You are helping configure a multi-agent research team for this problem.
+Identify 5-7 core technical concepts for this research problem.
 
-Problem:
+## Problem:
 {problem_statement}
 
-Target metric: {target_metric}
+## Target Metric:
+{target_metric}
+{context_section}
+## Task:
+Identify the 5-7 MOST CRITICAL technical concepts for this specific problem.
+Focus on strategic concepts that represent distinct areas of expertise.
 
-Task:
-Extract the 10-20 most important technical concepts, domain ideas, or methods
-that the team should explicitly track.
+Output format (one per line):
+concept_name | importance (1-3)
 
-Rules:
-- Output ONE concept per line.
-- Format: concept_name | importance | category
-- concept_name: short, snake_case, no spaces (e.g. gradient_boosting, microbial_growth)
-- importance: integer 1, 2, or 3 (3 = very important).
-- category: one of {{domain, data, model, infra}}. If unsure, use domain.
-- No explanations, no headings, only the raw list.
+Examples: ensemble_methods, time_series_analysis, feature_engineering,
+          class_imbalance, regularization, interpretability
+
+Be selective - quality over quantity.
 """.strip()
 
         raw = self.llm.generate(prompt, temperature=0.2)
@@ -521,25 +533,18 @@ Rules:
             if not name:
                 continue
                 
-            importance = 1.0
-            category = ConceptCategory.DOMAIN
+            importance = 2.0  # default
             
             if len(parts) >= 2:
                 try:
                     importance = float(parts[1])
                 except ValueError:
-                    importance = 1.0
-            
-            if len(parts) >= 3:
-                cat_str = parts[2].lower()
-                # Check if valid category
-                if cat_str in [e.value for e in ConceptCategory]:
-                    category = ConceptCategory(cat_str)
+                    importance = 2.0
             
             domain_concepts[name] = Concept(
                 name=name,
                 importance=importance,
-                category=category,
+                category=ConceptCategory.DOMAIN,
                 source="llm",
             )
             
@@ -548,59 +553,7 @@ Rules:
                 
         return domain_concepts
 
-    def _build_data_concepts_from_schema(
-        self, column_schemas: Optional[Dict[str, List[str]]]
-    ) -> Dict[str, Concept]:
-        data_concepts = {}
-        if not column_schemas:
-            return data_concepts
-
-        has_datetime = False
-        has_categorical = False
-
-        for df_name, cols in column_schemas.items():
-            for col in cols:
-                col_lower = col.lower()
-                if any(tok in col_lower for tok in ["date", "time", "timestamp"]):
-                    has_datetime = True
-                if any(tok in col_lower for tok in ["category", "type", "code", "class", "status"]):
-                    has_categorical = True
-
-        if has_datetime:
-            data_concepts["time_series_features"] = Concept(
-                name="time_series_features",
-                importance=2.0,
-                category=ConceptCategory.DATA,
-                source="schema",
-            )
-        if has_categorical:
-            data_concepts["categorical_encoding"] = Concept(
-                name="categorical_encoding",
-                importance=2.0,
-                category=ConceptCategory.DATA,
-                source="schema",
-            )
-        return data_concepts
-
-    def _build_model_concepts_from_techniques(
-        self, techniques: Optional[List[str]]
-    ) -> Dict[str, Concept]:
-        model_concepts = {}
-        if not techniques:
-            return model_concepts
-
-        for t in techniques:
-            name = t.lower().replace(" ", "_")
-            if len(name) < 4:
-                continue
-            if name not in model_concepts:
-                model_concepts[name] = Concept(
-                    name=name,
-                    importance=1.5,
-                    category=ConceptCategory.MODEL,
-                    source="code",
-                )
-        return model_concepts
+    # Schema and technique builders removed - concepts now come only from domain analysis
 
     # ----- Initialization & Updates -----
 
@@ -704,6 +657,78 @@ Rules:
             raise RuntimeError("EvolutionAgent not initialized")
         self.team_state.record_metric(value)
 
+    def _redistribute_knowledge_before_deletion(self, deleted_agent: Any) -> None:
+        """
+        Transfer deleted agent's knowledge to most related remaining agents.
+        
+        Prevents knowledge loss when pruning team - redistributes techniques,
+        patterns, and papers to agents with overlapping expertise.
+        """
+        if not self.team_state:
+            return
+        
+        # Get deleted agent's KB
+        if not hasattr(deleted_agent, 'knowledge_base'):
+            return
+        
+        deleted_kb = deleted_agent.knowledge_base
+        deleted_title = getattr(deleted_agent, 'title', 'Agent')
+        
+        # Find most related agents based on concept overlap
+        deleted_state = None
+        for state in self.team_state.agent_states.values():
+            if state.agent_ref == deleted_agent:
+                deleted_state = state
+                break
+        
+        if not deleted_state:
+            return
+        
+        # Score remaining agents by concept overlap with deleted agent
+        overlap_scores = []
+        for key, state in self.team_state.agent_states.items():
+            if state.agent_ref == deleted_agent:
+                continue  # Skip self
+            
+            # Compute depth overlap
+            overlap = sum(
+                min(deleted_state.depths.get(c, 0), state.depths.get(c, 0))
+                for c in deleted_state.depths.keys()
+            )
+            overlap_scores.append((overlap, state.agent_ref))
+        
+        if not overlap_scores:
+            return
+        
+        # Sort by overlap, take top 2
+        overlap_scores.sort(reverse=True, key=lambda x: x[0])
+        recipients = [agent for _, agent in overlap_scores[:2]]
+        
+        # Transfer knowledge
+        print(f"      📚 Redistributing {deleted_title}'s knowledge to {len(recipients)} agents...")
+        
+        for recipient in recipients:
+            if not hasattr(recipient, 'knowledge_base'):
+                continue
+            
+            # Transfer techniques
+            for technique in deleted_kb.techniques_mastered:
+                if technique not in recipient.knowledge_base.techniques_mastered:
+                    recipient.knowledge_base.techniques_mastered.append(technique)
+            
+            # Transfer successful patterns
+            for pattern in deleted_kb.successful_patterns:
+                if pattern not in recipient.knowledge_base.successful_patterns:
+                    recipient.knowledge_base.successful_patterns.append(pattern)
+            
+            # Transfer papers
+            existing_titles = [p.title for p in recipient.knowledge_base.papers]
+            for paper in deleted_kb.papers:
+                if paper.title not in existing_titles:
+                    recipient.knowledge_base.add_paper(paper)
+            
+            print(f"         → Transferred to {getattr(recipient, 'title', 'Agent')}")
+
     def step(self) -> EvolutionDecision:
         """
         Perform one evolution step.
@@ -746,6 +771,8 @@ Rules:
         if current_size > min_size:
             weakest_state = self.team_state.select_weakest_agent(self.policy)
             if weakest_state is not None:
+                # Before deleting, redistribute their knowledge to related agents
+                self._redistribute_knowledge_before_deletion(weakest_state.agent_ref)
                 agents_to_delete.append(weakest_state.agent_ref)
 
         # 4) New agent proposals (only if we're below max size OR if we're deleting someone)
@@ -1016,6 +1043,131 @@ Rules:
         
         for pattern in relevant_patterns[-5:]:  # Last 5 relevant patterns
             kb.successful_patterns.append(pattern)
+
+    def refine_concept_space(
+        self,
+        problem_statement: str,
+        target_metric: str,
+        last_approach: str,
+        last_metric: float,
+        improved: bool,
+        reflection_text: str,
+        iteration: int
+    ) -> None:
+        """
+        Refine the concept space based on latest iteration learnings.
+        
+        Called after each iteration to dynamically evolve which concepts
+        matter based on what the team actually tried and what the PI reflected on.
+        """
+        if not self._concept_space or not self.team_state or iteration == 0:
+            return
+        
+        # Format current concepts with coverage
+        current_concepts_str = "\n".join([
+            f"{name}: importance={c.importance:.2f}, coverage={self.team_state.concept_coverage().get(name, 0):.2f}"
+            for name, c in self._concept_space.concepts.items()
+        ])
+        
+        # Get reflection snippet
+        reflection_snippet = reflection_text[:300] + "..." if len(reflection_text) > 300 else reflection_text
+        
+        prompt = f"""
+Identify 5-7 core technical concepts for this research problem.
+
+## Problem:
+{problem_statement}
+
+## Latest Iteration (#{iteration}):
+Tried: {last_approach[:200]}
+Result: {target_metric} = {last_metric:.4f} ({'improved' if improved else 'no improvement'})
+PI noted: {reflection_snippet}
+
+## Current Concepts:
+{current_concepts_str}
+
+## Task:
+What expertise areas matter MOST for this specific problem?
+
+Output (one per line):
+concept_name | importance (1-3)
+
+Keep concepts that remain relevant.
+Add concepts that emerged as important.
+Remove concepts (importance=0) that proved irrelevant.
+""".strip()
+        
+        raw = self.llm.generate(prompt, temperature=0.2)
+        new_concepts: Dict[str, Concept] = {}
+        
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [p.strip() for p in line.split("|")]
+            
+            name = parts[0]
+            if not name:
+                continue
+            
+            importance = 2.0
+            if len(parts) >= 2:
+                try:
+                    importance = float(parts[1])
+                except ValueError:
+                    importance = 2.0
+            
+            # Skip if marked for removal
+            if importance <= 0:
+                continue
+            
+            new_concepts[name] = Concept(
+                name=name,
+                importance=importance,
+                category=ConceptCategory.DOMAIN,
+                source="refinement",
+            )
+            
+            if len(new_concepts) >= 7:
+                break
+        
+        if not new_concepts:
+            # Keep existing if refinement failed
+            return
+        
+        # Replace concept space
+        self._concept_space = ConceptSpace(concepts=new_concepts)
+        
+        # Normalize
+        weights = normalize_distribution({n: c.importance for n, c in new_concepts.items()})
+        for n, w in weights.items():
+            self._concept_space.concepts[n].importance = w
+        
+        # Update team state problem weights
+        self.team_state.problem = ProblemConcepts(
+            concept_weights={n: c.importance for n, c in new_concepts.items()}
+        )
+        
+        # Update agent depths for new/removed concepts
+        for state in self.team_state.agent_states.values():
+            # Remove depths for concepts no longer tracked
+            removed = [n for n in state.depths if n not in new_concepts]
+            for n in removed:
+                del state.depths[n]  
+            
+            # Initialize depths for new concepts
+            expertise_text = (
+                (getattr(state.agent_ref, "expertise", "") or "") + " " +
+                (getattr(state.agent_ref, "title", "") or "")
+            ).lower().replace("-", " ").replace("_", " ")
+            
+            for name in new_concepts.keys():
+                if name not in state.depths:
+                    tokens = name.replace("_", " ").split()
+                    if any(tok in expertise_text for tok in tokens):
+                        state.depths[name] = 0.3
+                    else:
+                        state.depths[name] = 0.05
 
     def maybe_expand_concepts_from_techniques(
         self,
