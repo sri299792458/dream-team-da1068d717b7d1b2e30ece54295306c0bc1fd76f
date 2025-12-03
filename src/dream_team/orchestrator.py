@@ -142,6 +142,10 @@ class ExperimentOrchestrator:
         data_context["artifacts_dir"] = artifacts_dir
 
         self.executor = CodeExecutor(data_context=data_context)
+        
+        # Connect executor and artifacts_dir to context builder
+        self.context_builder.executor = self.executor
+        self.context_builder.artifacts_dir = artifacts_dir
 
         # Store for prompts & evolution
         self.problem_statement = problem_statement

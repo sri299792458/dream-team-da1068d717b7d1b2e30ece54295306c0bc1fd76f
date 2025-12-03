@@ -6,6 +6,7 @@ Replaces scattered context building and truncation logic.
 """
 
 from typing import Dict, Any, List, Optional
+from pathlib import Path
 from .semantic_state import IterationRecord
 from .agent import Agent, KnowledgeBase
 from .context import ReflectionMemory
@@ -22,7 +23,9 @@ class ContextBuilder:
     def __init__(
         self,
         experiment_id: str,
-        reflection_memory: Optional[ReflectionMemory] = None
+        reflection_memory: Optional[ReflectionMemory] = None,
+        executor=None,  # CodeExecutor (avoid circular import)
+        artifacts_dir: Optional[Path] = None
     ):
         """
         Initialize context builder.
@@ -30,9 +33,13 @@ class ContextBuilder:
         Args:
             experiment_id: Experiment identifier
             reflection_memory: Memory of past reflections
+            executor: CodeExecutor instance for execution state access
+            artifacts_dir: Directory where artifacts are saved
         """
         self.experiment_id = experiment_id
         self.reflection_memory = reflection_memory or ReflectionMemory()
+        self.executor = executor
+        self.artifacts_dir = artifacts_dir
         
         # Will be populated during orchestration
         self.iterations: List[IterationRecord] = []
@@ -126,25 +133,39 @@ class ContextBuilder:
         
         Includes:
         - Team plan
+        - Execution state (variables, DataFrames, artifacts)
         - Last iteration's analyses
         - KB successful patterns
-        - Data schemas
         
         Args:
             coding_agent: The agent who will write code
             team_plan: Plan from team meeting
             target_metric: Metric being optimized
-            column_schemas: Data column information
+            column_schemas: DEPRECATED - now auto-extracted from execution context
         
         Returns:
             Formatted context string
         """
         context = "# Context for Implementation\n\n"
         
-        # Data context
-        if column_schemas:
+        # NEW: Execution State
+        var_inventory = self._build_variable_inventory()
+        if var_inventory:
+            context += var_inventory
+        
+        # NEW: Current DataFrame schemas (auto-extracted)
+        current_schemas = self._build_column_schemas()
+        if current_schemas:
+            context += "## Current Data Schemas\n\n"
+            context += current_schemas
+        elif column_schemas:  # Fallback to passed schemas (bootstrap)
             context += "## Data Schema (CRITICAL: Use EXACT column names)\n\n"
             context += column_schemas + "\n\n"
+        
+        # NEW: Saved artifacts
+        artifacts = self._build_artifact_inventory()
+        if artifacts:
+            context += artifacts
         
         # Team plan
         context += "## Team Plan\n\n"
@@ -318,5 +339,87 @@ class ContextBuilder:
         for key, value in iter_record.metrics.items():
             if key != target_metric:
                 context += f"**{key}:** {value:.4f}\n"
+        
+        return context
+    
+    # ===== Execution State Helpers =====
+    
+    def _build_variable_inventory(self) -> str:
+        """Build inventory of available variables from executor."""
+        if not self.executor or not self.executor.data_context:
+            return ""
+        
+        context = "## Available Variables\n\n"
+        context += "Variables currently in execution context:\n\n"
+        
+        import pandas as pd
+        import numpy as np
+        
+        for name, value in self.executor.data_context.items():
+            # Skip internal vars
+            if name.startswith('_') or name in ['pd', 'np', 'torch', 'Path', 'artifacts_dir']:
+                continue
+            
+            # Describe the type and shape
+            if isinstance(value, pd.DataFrame):
+                context += f"- `{name}`: DataFrame ({value.shape[0]} rows, {value.shape[1]} cols)\n"
+            elif isinstance(value, pd.Series):
+                context += f"- `{name}`: Series ({len(value)} values)\n"
+            elif isinstance(value, np.ndarray):
+                context += f"- `{name}`: ndarray {value.shape}\n"
+            elif hasattr(value, '__class__'):
+                class_name = value.__class__.__name__
+                # Check if it's a fitted model
+                if hasattr(value, 'predict') or hasattr(value, 'fit'):
+                    context += f"- `{name}`: {class_name} (fitted model)\n"
+                else:
+                    context += f"- `{name}`: {class_name}\n"
+            else:
+                context += f"- `{name}`: {type(value).__name__}\n"
+        
+        context += "\n"
+        return context
+    
+    def _build_column_schemas(self) -> str:
+        """Extract current DataFrame column schemas from execution context."""
+        if not self.executor or not self.executor.data_context:
+            return ""
+        
+        import pandas as pd
+        context = ""
+        
+        # Find DataFrames in context
+        for name, value in self.executor.data_context.items():
+            if isinstance(value, pd.DataFrame):
+                context += f"### {name} Columns\n\n"
+                for col in value.columns:
+                    dtype = str(value[col].dtype)
+                    context += f"- `{col}`: {dtype}\n"
+                context += "\n"
+        
+        return context
+    
+    def _build_artifact_inventory(self) -> str:
+        """Build inventory of saved artifacts."""
+        if not self.artifacts_dir or not self.artifacts_dir.exists():
+            return ""
+        
+        # Scan for common artifact types
+        artifacts = list(self.artifacts_dir.glob("*.pkl")) + \
+                   list(self.artifacts_dir.glob("*.joblib")) + \
+                   list(self.artifacts_dir.glob("*.pt")) + \
+                   list(self.artifacts_dir.glob("*.pth"))
+        
+        if not artifacts:
+            return ""
+        
+        context = "## Saved Artifacts\n\n"
+        context += "Models and objects saved from previous iterations:\n\n"
+        
+        for artifact in artifacts:
+            size_kb = artifact.stat().st_size / 1024
+            context += f"- `{artifact.name}` ({size_kb:.1f} KB)\n"
+        
+        context += "\nLoad with: `joblib.load(artifacts_dir / 'filename.pkl')` or `torch.load(artifacts_dir / 'filename.pt')`\n\n"
         
         return context
