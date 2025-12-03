@@ -1046,8 +1046,7 @@ Identify 5-7 core technical concepts for this research problem.
 {problem_statement}
 
 ## Latest Iteration (#{iteration}):
-Tried: {last_approach[:800]}
-Result: {target_metric} = {last_metric:.4f} ({'improved' if improved else 'no improvement'})
+
 
 ## Reflections:
 {reflection_context}

@@ -184,20 +184,9 @@ class ContextBuilder:
         context += "## Team Plan\n\n"
         context += team_plan + "\n\n"
 
-        # Coding agent's KB learnings
-        kb_data = coding_agent.knowledge_base.collect_for_intent("code_implementation", max_items=3)
-        if kb_data.get("patterns") or kb_data.get("techniques"):
-            context += "## Your Past Learnings\n\n"
-            if kb_data.get("patterns"):
-                context += "**Successful Patterns:**\n"
-                for pattern in kb_data["patterns"]:
-                    context += f"- {pattern}\n"
-                context += "\n"
-            if kb_data.get("techniques"):
-                context += "**Techniques You've Mastered:**\n"
-                for technique in kb_data["techniques"]:
-                    context += f"- {technique}\n"
-                context += "\n"
+        # Coding agent's KB learnings - DEPRECATED/REMOVED
+        # We now rely on the PI's plan and Team Lead's reflection for this context.
+        pass
 
         # Last iteration insights
         if self.iterations:
@@ -209,7 +198,7 @@ class ContextBuilder:
             for key, value in last.metrics.items():
                 if key != target_metric:
                     context += f"**{key}:** {value:.4f}\n"
-
+            
         return context
 
     def for_error_fix(
@@ -248,8 +237,8 @@ class ContextBuilder:
         context += f"**Error Message:**\n```\n{error}\n```\n\n"
 
         if traceback:
-            # Truncate very long tracebacks
-            tb_preview = traceback[:2000] + "\n... (truncated)" if len(traceback) > 2000 else traceback
+            # Truncate very long tracebacks (increased from 2000)
+            tb_preview = traceback[:10000] + "\n... (truncated)" if len(traceback) > 10000 else traceback
             context += f"**Traceback:**\n```\n{tb_preview}\n```\n\n"
 
         # Original approach
@@ -257,7 +246,8 @@ class ContextBuilder:
         context += approach + "\n\n"
 
         # Failed code
-        code_preview = failed_code[:1500] + "\n... (truncated)" if len(failed_code) > 1500 else failed_code
+        # Increased from 1500 to 10000 to ensure full context
+        code_preview = failed_code[:10000] + "\n... (truncated)" if len(failed_code) > 10000 else failed_code
         context += "## Failed Code\n\n"
         context += f"```python\n{code_preview}\n```\n\n"
 

@@ -1751,25 +1751,9 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
         # Update all agents
         for agent in self.all_agents:
             # Track success/failure patterns
-            if is_improvement and current_metric is not None and prev_metric is not None:
-                improvement = abs(current_metric - prev_metric)
-                technique = "iteration_approach"
-                
-                agent.knowledge_base.add_success_pattern(
-                    iteration=iter_record.iteration,
-                    technique=technique,
-                    metric=target_metric,
-                    improvement=improvement
-                )
-            elif not is_improvement and prev_metric is not None:
-                technique = "iteration_approach"
-                
-                agent.knowledge_base.add_failure_pattern(
-                    iteration=iter_record.iteration,
-                    technique=technique,
-                    metric=target_metric,
-                    reason="Did not improve metric"
-                )
+            # Track success/failure patterns - DEPRECATED/REMOVED
+            # We now rely on the PI's plan and Team Lead's reflection for this context.
+            pass
             
             # Track errors
             if iter_record.results.get('error'):

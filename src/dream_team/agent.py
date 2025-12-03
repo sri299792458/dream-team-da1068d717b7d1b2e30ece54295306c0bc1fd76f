@@ -45,9 +45,7 @@ class KnowledgeBase:
     """Agent's accumulated knowledge"""
     domain_facts: List[str] = field(default_factory=list)
     papers: List[Paper] = field(default_factory=list)
-    techniques_mastered: List[str] = field(default_factory=list)
     error_insights: List[str] = field(default_factory=list)
-    successful_patterns: List[str] = field(default_factory=list)
 
     def add_paper(self, paper: Paper):
         """Add paper, avoiding duplicates"""
@@ -57,24 +55,12 @@ class KnowledgeBase:
     def add_fact(self, fact: str, source: Optional[str] = None):
         """Add domain fact with optional citation"""
         fact_with_source = f"{fact} [Source: {source}]" if source else fact
+    def add_fact(self, fact: str, source: str):
+        fact_with_source = f"{fact} (Source: {source})"
         if fact_with_source not in self.domain_facts:
             self.domain_facts.append(fact_with_source)
 
-    def add_technique(self, technique: str):
-        if technique not in self.techniques_mastered:
-            self.techniques_mastered.append(technique)
-    
-    def add_success_pattern(self, iteration: int, technique: str, metric: str, improvement: float):
-        """Track successful pattern."""
-        pattern = f"Iter {iteration}: {technique} improved {metric} by {improvement:.4f}"
-        if pattern not in self.successful_patterns:
-            self.successful_patterns.append(pattern)
-    
-    def add_failure_pattern(self, iteration: int, technique: str, metric: str, reason: str):
-        """Track failure pattern."""
-        pattern = f"Iter {iteration}: {technique} failed on {metric} - {reason}"
-        if pattern not in self.error_insights:
-            self.error_insights.append(pattern)
+    # add_technique, add_success_pattern, add_failure_pattern REMOVED
     
     def add_error_insight(self, iteration: int, error_type: str, error_msg: str, solution: Optional[str] = None):
         """Add error catalog entry."""
@@ -96,19 +82,13 @@ class KnowledgeBase:
             Dictionary with categorized knowledge
         """
         result = {
-            "techniques": [],
-            "patterns": [],
             "pitfalls": [],
             "papers": []
         }
         
         if intent == "plan_next_iteration":
-            # Most recent successful patterns
-            result["patterns"] = self.successful_patterns[-max_items:]
             # Known pitfalls to avoid
             result["pitfalls"] = self.error_insights[-max_items:]
-            # Techniques mastered
-            result["techniques"] = self.techniques_mastered[-max_items:]
             # Relevant papers
             for paper in self.papers[-max_items:]:
                 if paper.key_findings:
@@ -116,10 +96,6 @@ class KnowledgeBase:
                     result["papers"].append(summary)
         
         elif intent == "code_implementation":
-            # Successful patterns for guidance
-            result["patterns"] = self.successful_patterns[-max_items:]
-            # Techniques to use
-            result["techniques"] = self.techniques_mastered[-max_items:]
             # Papers with techniques
             for paper in self.papers[-max_items:]:
                 if paper.techniques:
@@ -129,8 +105,6 @@ class KnowledgeBase:
         elif intent == "fix_error":
             # Error insights and solutions
             result["pitfalls"] = self.error_insights[-max_items:]
-            # Successful patterns that worked
-            result["patterns"] = self.successful_patterns[-max_items:]
         
         return result
 
@@ -138,9 +112,7 @@ class KnowledgeBase:
         return {
             "domain_facts": self.domain_facts,
             "papers": [p.to_dict() for p in self.papers],
-            "techniques": self.techniques_mastered,
-            "error_insights": self.error_insights,
-            "successful_patterns": self.successful_patterns
+            "error_insights": self.error_insights
         }
 
 
