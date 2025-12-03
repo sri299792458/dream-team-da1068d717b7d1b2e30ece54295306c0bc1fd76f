@@ -33,14 +33,14 @@ def timeout_handler(signum, frame):
 class CodeExecutor:
     """Executes Python code in a controlled environment."""
 
-    def __init__(self, data_context: Dict[str, Any] = None, auto_install: bool = True, max_output_length: int = 10000):
+    def __init__(self, data_context: Dict[str, Any] = None, auto_install: bool = True, max_output_length: int = 100000):
         """
         Initialize executor with data context.
 
         Args:
             data_context: Dictionary of data/variables available to executed code
             auto_install: Whether to automatically install missing packages (default: True)
-            max_output_length: Maximum length of output to store (default: 10000 chars)
+            max_output_length: Maximum length of output to store (default: 100000 chars)
         """
         self.data_context = data_context or {}
         self.execution_history = []

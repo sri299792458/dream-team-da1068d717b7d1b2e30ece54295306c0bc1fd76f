@@ -72,7 +72,7 @@ class ExperimentOrchestrator:
 
         # === Layer 2: analyzers (semantic state builders) ===
         self.output_analyzer = OutputAnalyzer(self.llm)
-        self.code_analyzer = CodeAnalyzer(self.llm)
+        # CodeAnalyzer removed as per user request - relying on output analysis
         self.iteration_records: List[IterationRecord] = []
 
         # Reflexion: Memory of past reflections for learning
@@ -228,7 +228,7 @@ class ExperimentOrchestrator:
                 error=error_text,
                 traceback=traceback_text,
             )
-            code_analysis = self.code_analyzer.analyze(implementation)
+            # code_analysis = self.code_analyzer.analyze(implementation) # Removed
 
             # Step 5.5: Reflexion - Reflect on iteration and extract learnings
             print(f"\n🤔 {self.team_lead.title} reflecting on iteration...\n")
@@ -271,7 +271,7 @@ class ExperimentOrchestrator:
                 results=serializable_results,
                 metrics=metrics,
                 output_analysis=output_analysis,
-                code_analysis=code_analysis,
+                code_analysis=None,
                 reflection=reflection,
             )
 
@@ -309,11 +309,9 @@ class ExperimentOrchestrator:
             )
 
             # Refine concept depths based on techniques actually used
+            # (Technique tracking removed as per user request)
             if self.evolution_agent is not None:
-                self.evolution_agent.refine_concepts_from_code(
-                    agent=self.coding_agent,
-                    techniques=code_analysis.techniques,
-                )
+                pass
 
             # Optional: save a human-readable iteration summary for debugging
             iteration_summary = {
@@ -505,6 +503,14 @@ Output ONLY the Python code, wrapped in ```python code blocks.
             print("❌ Exploration failed after retries:")
             print(results["error"])
 
+        # Analyze exploration results to provide structured insights
+        print("\n🔍 Analyzing exploration results...")
+        exploration_analysis = self.output_analyzer.analyze(
+            output=results['output'] if results['success'] else results.get('error', ''),
+            task_description="Initial data exploration and problem understanding",
+            code=code
+        )
+
         # PI reviews results and recruits team using ReAct
         print(f"\n{self.team_lead.title} reviewing exploration results and recruiting team...\n")
 
@@ -514,8 +520,12 @@ Based on the problem and exploration results, decide what expertise you need on 
 ## Problem:
 {problem_statement}
 
-## Exploration Results:
-{results['output'][:2000] if results['success'] else "Exploration failed, but you have the problem statement."}
+## Exploration Insights:
+**Summary:**
+{exploration_analysis.raw_summary}
+
+**Key Observations:**
+{chr(10).join([f"- {obs}" for obs in exploration_analysis.key_observations])}
 
 ## Your Task:
 List 1-3 team members you want to recruit. For each, provide:
@@ -1103,7 +1113,7 @@ Output ONLY Python code in ```python``` blocks.
                 error_text = None # We assume success if we are replaying successful exec
                 
                 output_analysis = self.output_analyzer.analyze(output_text, None, None)
-                code_analysis = self.code_analyzer.analyze(code)
+                # code_analysis = self.code_analyzer.analyze(code) # Removed
                 
                 # Create Record
                 rec = IterationRecord(
@@ -1113,17 +1123,15 @@ Output ONLY Python code in ```python``` blocks.
                     results={"success": True, "output": output_text}, # Minimal needed
                     metrics=metrics,
                     output_analysis=output_analysis,
-                    code_analysis=code_analysis,
+                    code_analysis=None,
                     reflection=reflection_text
                 )
                 self.iteration_records.append(rec)
                 
                 # Update Evolution Agent Concepts
+                # (Technique tracking removed as per user request)
                 if self.evolution_agent:
-                    self.evolution_agent.refine_concepts_from_code(
-                        agent=self.coding_agent,
-                        techniques=code_analysis.techniques
-                    )
+                    pass
             
             last_iteration = i
             

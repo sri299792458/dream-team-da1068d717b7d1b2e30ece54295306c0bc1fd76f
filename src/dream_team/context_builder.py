@@ -68,6 +68,8 @@ class ContextBuilder:
         - KB learnings
         - Evolution gaps/coverage
         - Past reflections
+        - Current Data Schemas (NEW)
+        - Saved Artifacts (NEW)
         
         Args:
             target_metric: Metric being optimized
@@ -78,6 +80,17 @@ class ContextBuilder:
         """
         context = "# Context for Team Planning\n\n"
         
+        # NEW: Current Data Schemas (Critical for preventing hallucinations)
+        current_schemas = self._build_column_schemas()
+        if current_schemas:
+            context += "## Current Data Schemas\n\n"
+            context += current_schemas
+            
+        # NEW: Saved Artifacts (Useful for planning reuse)
+        artifacts = self._build_artifact_inventory()
+        if artifacts:
+            context += artifacts
+
         # Recent iterations
         if self.iterations:
             context += "## Recent Iterations\n\n"
@@ -97,7 +110,7 @@ class ContextBuilder:
                         context += f"- {obs}\n"
                 
                 # Techniques used
-                if it.code_analysis.techniques:
+                if it.code_analysis and it.code_analysis.techniques:
                     context += f"**Techniques:** {', '.join(it.code_analysis.techniques[:5])}\n"
                 
                 context += "\n"
@@ -219,6 +232,8 @@ class ContextBuilder:
         
         Includes:
         - Error details
+        - Failed code (NEW)
+        - Execution state (NEW)
         - Similar past errors
         - Last output analysis
         - Relevant techniques
@@ -241,6 +256,25 @@ class ContextBuilder:
         context += "**Traceback:**\n```\n"
         context += traceback[:1000] + ("..." if len(traceback) > 1000 else "")
         context += "\n```\n\n"
+        
+        # NEW: Failed Code (Critical for debugging)
+        context += "## Failed Code\n```python\n"
+        context += failed_code
+        context += "\n```\n\n"
+        
+        # NEW: Execution State (Critical for knowing what exists)
+        var_inventory = self._build_variable_inventory()
+        if var_inventory:
+            context += var_inventory
+            
+        current_schemas = self._build_column_schemas()
+        if current_schemas:
+            context += "## Current Data Schemas\n\n"
+            context += current_schemas
+            
+        artifacts = self._build_artifact_inventory()
+        if artifacts:
+            context += artifacts
         
         # Original approach
         context += "## Original Approach\n\n"
@@ -296,18 +330,19 @@ class ContextBuilder:
         context += iter_record.approach + "\n\n"
         
         # Code Analysis
-        context += "## Code Analysis\n\n"
-        context += f"**Complexity:** {iter_record.code_analysis.complexity}\n"
-        
-        if iter_record.code_analysis.techniques:
-            context += f"**Techniques used:** {', '.join(iter_record.code_analysis.techniques)}\n"
-        
-        if iter_record.code_analysis.key_decisions:
-            context += "**Key decisions:**\n"
-            for decision in iter_record.code_analysis.key_decisions:
-                context += f"- {decision}\n"
-        
-        context += "\n"
+        if iter_record.code_analysis:
+            context += "## Code Analysis\n\n"
+            context += f"**Complexity:** {iter_record.code_analysis.complexity}\n"
+            
+            if iter_record.code_analysis.techniques:
+                context += f"**Techniques used:** {', '.join(iter_record.code_analysis.techniques)}\n"
+            
+            if iter_record.code_analysis.key_decisions:
+                context += "**Key decisions:**\n"
+                for decision in iter_record.code_analysis.key_decisions:
+                    context += f"- {decision}\n"
+            
+            context += "\n"
         
         # Output Analysis
         context += "## Execution Analysis\n\n"

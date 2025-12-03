@@ -6,7 +6,7 @@ Replaces simple truncation with intelligent understanding.
 """
 
 from typing import Dict, Any, Optional
-from .semantic_state import OutputAnalysis, CodeAnalysis
+from .semantic_state import OutputAnalysis
 from .llm import GeminiLLM
 import json
 import re
@@ -85,7 +85,7 @@ class OutputAnalyzer:
 ```
 {output}
 ```
-""".format(output=output[:5000])  # Limit to 5k chars
+""".format(output=output)  # No truncation - let LLM handle it
         
         if error:
             prompt += f"\n**Error:** {error}\n"
@@ -160,136 +160,4 @@ Only include observations that are clearly evident in the output.
         )
 
 
-class CodeAnalyzer:
-    """
-    Analyze code structure using LLM.
-    
-    Extracts:
-    - ML techniques used
-    - Key design decisions
-    - Libraries
-    - Complexity assessment
-    - Data flow
-    """
-    
-    def __init__(self, llm: Optional[GeminiLLM] = None):
-        """
-        Initialize analyzer.
-        
-        Args:
-            llm: LLM instance for analysis (creates default if None)
-        """
-        self.llm = llm or GeminiLLM(model_name="gemini-2.5-flash")
-    
-    def analyze(self, code: str) -> CodeAnalysis:
-        """
-        Analyze code structure.
-        
-        Args:
-            code: Python code to analyze
-        
-        Returns:
-            CodeAnalysis with semantic understanding
-        """
-        prompt = self._build_analysis_prompt(code)
-        
-        try:
-            data = self.llm.generate_json(
-                prompt,
-                system_instruction="You are an expert code analyzer specializing in machine learning code."
-            )
-        except Exception:
-            # Fallback to basic analysis
-            return self._fallback_analysis(code)
-        
-        return CodeAnalysis(
-            techniques=data.get("techniques", []),
-            key_decisions=data.get("key_decisions", []),
-            libraries_used=data.get("libraries", []),
-            complexity=data.get("complexity", "moderate"),
-            data_flow_summary=data.get("data_flow", "")
-        )
-    
-    def _build_analysis_prompt(self, code: str) -> str:
-        """Build prompt for code analysis."""
-        return f"""Analyze this Python code and extract key information.
 
-**Code:**
-```python
-{code[:8000]}
-```
-
-Return a JSON object with:
-{{
-  "techniques": ["technique1", "technique2"],
-  "key_decisions": ["decision1", "decision2"],
-  "libraries": ["library1", "library2"],
-  "complexity": "simple|moderate|complex",
-  "data_flow": "Brief description of data flow"
-}}
-
-For techniques, identify ML/data science techniques like:
-- gradient_boosting, random_forest, neural_network
-- cross_validation, grid_search, feature_engineering
-- regularization, ensemble, stacking
-- dimensionality_reduction, clustering
-
-For key_decisions, identify important design choices:
-- Model selection rationale
-- Feature engineering approach
-- Validation strategy
-- Hyperparameter tuning method
-
-For complexity:
-- simple: Basic model, straightforward preprocessing
-- moderate: Multiple models or advanced preprocessing
-- complex: Ensemble, extensive feature engineering, or custom architectures
-
-For data_flow:
-- Briefly describe how data moves through the code (load → preprocess → train → evaluate)
-"""
-    
-    def _fallback_analysis(self, code: str) -> CodeAnalysis:
-        """Fallback analysis if LLM fails."""
-        # Extract imports
-        import_lines = [line for line in code.split('\n') if line.strip().startswith('import') or line.strip().startswith('from')]
-        libraries = []
-        for line in import_lines:
-            parts = line.split()
-            if 'import' in parts:
-                idx = parts.index('import')
-                if idx + 1 < len(parts):
-                    lib = parts[idx + 1].split('.')[0]
-                    libraries.append(lib)
-        
-        # Common ML techniques
-        techniques = []
-        code_lower = code.lower()
-        technique_keywords = {
-            "gradient_boosting": ["gradientboosting", "xgboost", "lgbm", "catboost"],
-            "random_forest": ["randomforest"],
-            "neural_network": ["neural", "keras", "torch", "tensorflow"],
-            "cross_validation": ["cross_val", "kfold"],
-            "feature_engineering": ["featureengineering", "feature_union"]
-        }
-        
-        for technique, keywords in technique_keywords.items():
-            if any(kw in code_lower for kw in keywords):
-                techniques.append(technique)
-        
-        # Assess complexity
-        lines = len(code.split('\n'))
-        if lines < 50:
-            complexity = "simple"
-        elif lines < 150:
-            complexity = "moderate"
-        else:
-            complexity = "complex"
-        
-        return CodeAnalysis(
-            techniques=techniques,
-            key_decisions=[],
-            libraries_used=libraries,
-            complexity=complexity,
-            data_flow_summary="Data is loaded, processed, and used for model training."
-        )

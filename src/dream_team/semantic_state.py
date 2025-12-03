@@ -74,7 +74,7 @@ class IterationRecord:
     
     # Semantic analyses
     output_analysis: OutputAnalysis
-    code_analysis: CodeAnalysis
+    code_analysis: Optional[CodeAnalysis] = None
     reflection: str  # Or parsed Reflection object
     
     # Optional metadata
@@ -86,7 +86,8 @@ class IterationRecord:
         data = asdict(self)
         # Convert nested dataclasses
         data["output_analysis"] = self.output_analysis.to_dict()
-        data["code_analysis"] = self.code_analysis.to_dict()
+        if self.code_analysis:
+            data["code_analysis"] = self.code_analysis.to_dict()
         return data
     
     @classmethod
@@ -94,7 +95,12 @@ class IterationRecord:
         """Load from dictionary."""
         # Convert nested dataclasses
         output_analysis = OutputAnalysis.from_dict(data.pop("output_analysis"))
-        code_analysis = CodeAnalysis.from_dict(data.pop("code_analysis"))
+        
+        code_analysis = None
+        if "code_analysis" in data and data["code_analysis"]:
+            code_analysis = CodeAnalysis.from_dict(data.pop("code_analysis"))
+        elif "code_analysis" in data:
+            data.pop("code_analysis")  # Remove None/empty if present
         
         return cls(
             output_analysis=output_analysis,
