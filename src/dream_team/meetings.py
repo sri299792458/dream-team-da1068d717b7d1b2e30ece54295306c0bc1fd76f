@@ -128,15 +128,14 @@ Discussion so far:
 Your reasoning process:
 {chr(10).join([f"Step {i+1}: {thought}" for i, thought in enumerate(reasoning_steps)])}
 
-Now write your FINAL SYNTHESIS based on your reasoning.
+Write your FINAL SYNTHESIS based on your reasoning.
 
-IMPORTANT:
-- Make FINAL DECISIONS, do NOT ask clarifying questions
-- Synthesize what the team proposed into a clear action plan
-- Be decisive and specific about what to implement
-- Structure it clearly for the coding agent to understand
+Requirements:
+- Make FINAL DECISIONS. Do not ask clarifying questions.
+- Be specific: name the exact methods, features, or approaches to implement.
+- Structure clearly for the coding agent.
 
-Keep it focused (1-2 paragraphs).
+Output 1-2 focused paragraphs.
 """
         else:
             final_prompt = f"""You are providing intermediate synthesis.
@@ -241,9 +240,11 @@ Agenda: {agenda}
 
 Discussion so far:
 {context}
+
+Relevant past learnings:
 {kb_context}
 
-Provide your input as {member.title}. Draw on your expertise and past learnings.
+Provide your input as {member.title}. Reference past learnings where directly applicable.
 Keep it concise (1-2 paragraphs).
 """,
                         system_instruction=member.prompt,
@@ -278,16 +279,22 @@ Keep it concise (1-2 paragraphs).
         final_synthesis = synthesis  # This is the team lead's synthesis from the last round
 
         # Generate structured metadata from transcript
-        metadata_prompt = f"""Based on this meeting transcript, extract structured metadata:
+        metadata_prompt = f"""Extract structured metadata from this meeting transcript.
 
+Transcript:
 {self._build_context()}
 
-Provide in JSON format:
+Output valid JSON only, no other text:
 {{
-    "key_insights": ["insight 1", "insight 2", ...],
-    "decisions": ["decision 1", "decision 2", ...],
-    "action_items": ["action 1", "action 2", ...]
+    "key_insights": ["insight 1", "insight 2"],
+    "decisions": ["decision 1", "decision 2"],
+    "action_items": ["action 1", "action 2"]
 }}
+
+Rules:
+- All three fields are required.
+- Use empty arrays [] if none found.
+- No markdown, no ```json blocks.
 """
 
         metadata = self.llm.generate_json(metadata_prompt, temperature=0.3)
@@ -336,24 +343,22 @@ Agenda: {agenda}
 
 Discussion so far:
 {context}
+
+Relevant past learnings:
 {kb_context}
 
-You have access to a paper search tool if you need it. Based on the problem:
-- If you already have sufficient expertise and knowledge, just provide your proposal directly
-- If you need to verify something or find supporting evidence, you can search papers
+You have access to paper search. Use it if:
+- The discussion mentions techniques you haven't implemented before
+- You need recent benchmarks or SOTA results
+- You want to cite supporting evidence
 
-**Available Tool**:
-- search_papers(query): Search Semantic Scholar for recent papers (2018-2025)
+Otherwise, provide your proposal directly.
 
-Provide your input as {agent.title}. You may:
-1. Just give your proposal if you have enough knowledge
-2. Or use the tool format if you want to search:
-   Thought: [Why I need to search]
-   Action: search_papers("[your query]")
+Tool format (if searching):
+Thought: [Why searching helps]
+Action: search_papers("[2-4 word query]")
 
-Then wait for results before giving your final proposal.
-
-If you don't need to search, just provide your proposal directly (1-2 paragraphs).
+If not searching, provide your proposal now (1-2 paragraphs).
 """
 
         response = self.llm.generate(
@@ -476,15 +481,15 @@ Keep it focused (1-2 paragraphs).
 
                     # Analyze paper to extract key insights
                     # Fast analysis for iteration speed
-                    analysis_prompt = f"""Extract 2-3 key actionable insights from this paper abstract.
+                    analysis_prompt = f"""Extract 2-3 actionable insights from this paper.
 
 Title: {paper.title}
 Abstract: {paper.abstract}
 
-Output ONLY a JSON array of 2-3 brief insights:
-["insight 1", "insight 2", "insight 3"]
+Output a JSON array only, no other text:
+["insight about method or technique", "insight 2", "insight 3"]
 
-Focus on methods, findings, or techniques that could be applied."""
+Focus on what can be directly applied to improve model performance."""
 
                     try:
                         insights = self.llm.generate_json(analysis_prompt, temperature=0.3)
@@ -550,6 +555,8 @@ class IndividualMeeting(Meeting):
 
 Task: {task}
 
+CONSTRAINT: All data variables already exist. You will not create or load any data.
+
 Think step-by-step about the APPROACH:
 - What's the overall architecture/structure?
 - What are the main steps?
@@ -608,11 +615,12 @@ Task: {task}
 Your reasoning process:
 {...}
 
-Now write the COMPLETE, EXECUTABLE code based on your reasoning.
+Write COMPLETE, EXECUTABLE Python code based on your reasoning.
 
-Important constraints:
-- Do NOT create or overwrite any preloaded data variables; assume they already exist.
-- Do NOT construct dummy toy datasets for these variables.
+Constraints:
+- All data variables already exist. Do NOT create, overwrite, or mock them.
+- Use exact column names from the schema provided.
+- Import all required libraries at the top.
 
 Output ONLY the code in ```python blocks.
 """
@@ -641,22 +649,18 @@ Output ONLY the code in ```python blocks.
         # Initial task with optional search
         initial_prompt = f"""Task: {task}
 
-You have access to a paper search tool if you need it:
-- If you already have sufficient knowledge, complete the task directly
-- If you need recent research or supporting evidence, you can search papers
+You have access to paper search. Use it if:
+- You need recent research or benchmarks
+- You want to cite supporting evidence
+- The task requires external knowledge
 
-**Available Tool**:
-- search_papers(query): Search Semantic Scholar for recent papers (2018-2025)
+Otherwise, complete the task directly.
 
-You may:
-1. Just complete the task if you have enough knowledge
-2. Or use the tool format if you want to search:
-   Thought: [Why I need to search]
-   Action: search_papers("[your query]")
+Tool format (if searching):
+Thought: [Why searching helps]
+Action: search_papers("[2-4 word query]")
 
-Then wait for results before completing the task.
-
-Be specific, detailed, and actionable.
+If not searching, complete the task now.
 """
 
         response = self.llm.generate(

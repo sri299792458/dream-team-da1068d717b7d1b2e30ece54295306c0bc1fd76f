@@ -498,48 +498,46 @@ class EvolutionAgent:
         if exploration_context:
             context_section = f"\n## Bootstrap Context:\n{exploration_context[:500]}\n"
         
-        prompt = f"""
-Identify 5-7 core technical concepts for this research problem.
+        prompt = f"""Identify 5-7 core technical concepts for this research problem.
 
-## Problem:
+Problem:
 {problem_statement}
 
-## Target Metric:
-{target_metric}
+Target Metric: {target_metric}
 {context_section}
-## Task:
-Identify the 5-7 MOST CRITICAL technical concepts for this specific problem.
-Focus on strategic concepts that represent distinct areas of expertise.
 
-Output format (one per line):
-concept_name | importance (1-3)
+Identify the MOST CRITICAL technical concepts. Focus on distinct areas of expertise.
 
-Examples: ensemble_methods, time_series_analysis, feature_engineering,
-          class_imbalance, regularization, interpretability
+Output valid JSON only:
+[
+  {{"concept": "ensemble_methods", "importance": 2}},
+  {{"concept": "feature_engineering", "importance": 3}}
+]
 
-Be selective - quality over quantity.
-""".strip()
+Rules:
+- importance: 1 (nice-to-have), 2 (important), 3 (critical)
+- 5-7 concepts total
+- No markdown, no other text
+"""
 
-        raw = self.llm.generate(prompt, temperature=0.2)
+        try:
+            raw_concepts = self.llm.generate_json(prompt, temperature=0.2)
+            if not isinstance(raw_concepts, list):
+                raw_concepts = []
+        except Exception:
+            raw_concepts = []
+
         domain_concepts: Dict[str, Concept] = {}
 
-        for line in raw.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
+        for item in raw_concepts:
+            if not isinstance(item, dict):
                 continue
-            parts = [p.strip() for p in line.split("|")]
             
-            name = parts[0]
+            name = item.get("concept")
             if not name:
                 continue
                 
-            importance = 2.0  # default
-            
-            if len(parts) >= 2:
-                try:
-                    importance = float(parts[1])
-                except ValueError:
-                    importance = 2.0
+            importance = float(item.get("importance", 2.0))
             
             domain_concepts[name] = Concept(
                 name=name,

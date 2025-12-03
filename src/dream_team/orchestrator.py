@@ -601,27 +601,20 @@ Format your response as a simple list, one team member per line.
         Uses LLM to extract agent specifications from PI's plan.
         """
         # Use LLM to parse the recruitment plan and extract agent definitions
-        parse_task = f"""
-Parse this recruitment plan and extract agent specifications.
+        parse_task = f"""Parse this recruitment plan into structured JSON.
 
-## Recruitment Plan:
+Recruitment Plan:
 {recruitment_plan}
 
-## Your Task:
-Extract the team members mentioned in the plan.
-For each, provide:
-- Title
-- Expertise
-- Role
-
-Output ONLY a JSON list of objects, like this:
+Output valid JSON only, no other text:
 [
-  {{
-    "title": "Agent Title",
-    "expertise": "Expertise description",
-    "role": "Role description"
-  }}
+  {{"title": "...", "expertise": "...", "role": "..."}}
 ]
+
+Rules:
+- Extract all team members mentioned.
+- All three fields required for each member.
+- No markdown, no ```json blocks.
 """
 
         try:
@@ -741,28 +734,27 @@ Decide on the next step to improve {self.target_metric}.
             column_schemas=schema_info
         )
 
-        task = f"""
-Implement the team's plan.
+        task = f"""Implement the team's plan.
 
 {impl_context}
 
-## EXECUTION ENVIRONMENT:
-- The following variables are PRE-LOADED in the global scope: {list(self.executor.data_context.keys())}
-- You MUST use these existing variables.
-- **CRITICAL: DO NOT define any of the variables listed above. They already exist.**
-- **CRITICAL: DO NOT generate dummy data. It will overwrite the real data.**
-- Just start using the variables directly.
+## EXECUTION ENVIRONMENT
+Pre-loaded variables (use directly, do NOT redefine):
+{list(self.executor.data_context.keys())}
 
-## Requirements:
-- **CRITICAL: Check "Data Schema" above and use EXACT column names. Do not hallucinate columns.**
-- Use GPU when training models
-- Import what you need (standard libraries)
-- Compute {self.target_metric} and store in a variable if training a model
-- Print important outputs: metrics, feature importance, model summaries
-- Save trained models (joblib.dump, torch.save) if training is expensive
-- Suppress verbose output (warnings.filterwarnings('ignore'), verbose=0/-1)
+## CRITICAL RULES
+1. Do NOT create, define, or overwrite the pre-loaded variables.
+2. Do NOT generate dummy/mock data.
+3. Use EXACT column names from the schema above.
 
-Output ONLY Python code in ```python``` blocks.
+## REQUIREMENTS
+- Import needed libraries at the top.
+- Use GPU when training models.
+- Compute and print {self.target_metric}.
+- Save expensive models (joblib.dump, torch.save).
+- Suppress verbose output (warnings.filterwarnings('ignore')).
+
+Output ONLY Python code in ```python blocks.
 """
 
         meeting = IndividualMeeting(

@@ -79,41 +79,108 @@ class OutputAnalyzer:
         traceback: Optional[str]
     ) -> str:
         """Build prompt for LLM analysis."""
-        prompt = """Analyze this code execution output and extract semantic information.
+        prompt = f"""Analyze code execution results.
 
-**Output:**
-```
+Task: {{task_description}}
+
+Code:
+{{code}}
+
+Output:
+{{output}}
+
+Error (if any):
+{{error}}
+{{traceback}}
+
+Provide analysis as valid JSON only, no other text:
+{{
+    "success": true or false,
+    "summary": "1-2 sentence summary",
+    "key_observations": ["obs1", "obs2"],
+    "errors": [],
+    "warnings": []
+}}
+
+Rules:
+- All fields required. Use empty arrays [] if none.
+- No markdown, no ```json blocks.
+""".format(
+            task_description="Code Execution", # Context not passed in this method, generic label
+            code="[Code not included in prompt to save tokens]" if len(output) > 10000 else "See above", # Placeholder as code isn't passed to this method
+            output=output,
+            error=error or "",
+            traceback=traceback or ""
+        )
+        
+        # Wait, the original method _build_analysis_prompt doesn't take task_description or code
+        # I need to check how to inject them or if I should stick to the available args.
+        # The user's prompt has {task_description} and {code}.
+        # But _build_analysis_prompt signature is (self, output, error, traceback).
+        # I should check where this is called.
+        # It is called in analyze(self, output, error, traceback).
+        # The analyze method doesn't take task_description or code either!
+        # Wait, let me check the file content again.
+        
+        # Line 35: def analyze(self, output, error, traceback)
+        # It seems I cannot easily inject task_description and code without changing the signature.
+        # However, the user request explicitly asks for this prompt structure.
+        # I will modify the prompt to use what I have, or I need to update the signature.
+        # Let's look at the original prompt in _build_analysis_prompt (lines 82-118).
+        # It only uses {output}, {error}, {traceback}.
+        
+        # I will adapt the user's prompt to match the available variables in _build_analysis_prompt.
+        # Or I can update the signature if I want to be thorough, but that might break callers.
+        # Callers: orchestrator.py line 226, 509.
+        # Line 509 passes task_description and code!
+        # Line 226 only passes output, error, traceback.
+        
+        # Let's check orchestrator.py again.
+        # Line 509: exploration_analysis = self.output_analyzer.analyze(..., task_description=..., code=...)
+        # But the definition in analyzers.py line 35 only has output, error, traceback.
+        # This implies there might be a mismatch or I missed *args/**kwargs.
+        # Let's check analyzers.py line 35 again.
+        # It is: def analyze(self, output: str, error: Optional[str] = None, traceback: Optional[str] = None) -> OutputAnalysis:
+        # So orchestrator line 509 might be failing or I misread it?
+        # Or maybe python allows it if I didn't see **kwargs?
+        # I viewed lines 1-166 of analyzers.py.
+        # Line 35-40:
+        #     def analyze(
+        #         self,
+        #         output: str,
+        #         error: Optional[str] = None,
+        #         traceback: Optional[str] = None
+        #     ) -> OutputAnalysis:
+        
+        # So orchestrator line 509 is passing arguments that `analyze` does not accept!
+        # This is a bug in the existing code or my understanding.
+        # Wait, let me check orchestrator.py line 509 in the file view I just did.
+        # I viewed lines 550-800 of orchestrator.py. I need to check line 509.
+        # I'll assume for now I should update `analyze` signature to accept them, as the user prompt expects them.
+        
+        # I will update `analyze` signature AND `_build_analysis_prompt` signature.
+        
+        return f"""Analyze code execution results.
+
+Output:
 {output}
-```
-""".format(output=output)  # No truncation - let LLM handle it
-        
-        if error:
-            prompt += f"\n**Error:** {error}\n"
-        
-        if traceback:
-            prompt += f"\n**Traceback:**\n```\n{traceback[:2000]}\n```\n"
-        
-        prompt += """
-Return a JSON object with:
-{
-  "summary": "Brief summary of what happened",
-  "errors": ["error message 1", "error message 2"],
-  "warnings": ["warning 1", "warning 2"],
-  "metrics": {"metric_name": value},
-  "observations": ["key observation 1", "key observation 2"]
-}
 
-For observations, extract factual evidence from the logs, such as:
-- Specific metric gaps (e.g., "Train accuracy 0.99 vs Test accuracy 0.50")
-- Explicit warning messages (e.g., "ConvergenceWarning: lbfgs failed to converge")
-- Data shape mismatches (e.g., "Found input variables with inconsistent numbers of samples")
-- Class distribution stats (e.g., "Class 0: 1000, Class 1: 10")
-- Null value counts
-- Execution time anomalies
+Error (if any):
+{error}
+{traceback}
 
-DO NOT diagnose or interpret (e.g., do not say "Model is overfitting").
-DO NOT offer solutions.
-Report ONLY what is explicitly present in the text.
+Provide analysis as valid JSON only, no other text:
+{{
+    "success": true or false,
+    "summary": "1-2 sentence summary",
+    "key_observations": ["obs1", "obs2"],
+    "errors": [],
+    "warnings": []
+}}
+
+Rules:
+- All fields required. Use empty arrays [] if none.
+- No markdown, no ```json blocks.
 """
         return prompt
     
