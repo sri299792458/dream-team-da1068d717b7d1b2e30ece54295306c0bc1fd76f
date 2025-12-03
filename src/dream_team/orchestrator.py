@@ -265,6 +265,19 @@ class ExperimentOrchestrator:
                 "description": results["description"],
             }
 
+            iter_record = IterationRecord(
+                iteration=self.iteration,
+                approach=approach,
+                code=implementation,
+                results=serializable_results,
+                metrics=metrics,
+                output_analysis=output_analysis,
+                reflection=reflection,
+            )
+
+            self.iteration_records.append(iter_record)
+            self.context_builder.set_iterations(self.iteration_records)
+
             if self.evolution_agent is not None and self.iteration > 0:
                 # Determine if metric improved
                 improved = False
