@@ -531,7 +531,7 @@ Based on the problem and exploration results, decide what expertise you need on 
 
 ## Your Task:
 List 1-3 team members you want to recruit. For each, provide:
-- Title (e.g., "ML Strategist", "Domain Expert", "Data Analyst")
+- Title (e.g., "ML Engineer", "Microbiologist")
 - Expertise (what they should know)
 - Role (what they'll contribute)
 
@@ -1284,6 +1284,7 @@ Output ONLY the complete Python code in ```python``` blocks.
         # If we have analysis, we rely on it and skip raw output to save context/noise.
         # If no analysis, we fall back to raw output.
         output_section = ""
+        output_preview = ""
         if output_analysis:
             output_section = f"""
 ## Execution Analysis (Automated)
