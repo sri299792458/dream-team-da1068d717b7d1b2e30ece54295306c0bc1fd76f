@@ -505,21 +505,22 @@ The PI wants to do initial exploration. Write Python code to implement this:
         print(f"\n{self.team_lead.title} reviewing exploration results and recruiting team...\n")
 
         recruitment_task = f"""
-Based on the problem and exploration results, decide what broad expertise areas you need on your team.
+Based on the problem, decide what broad expertise areas you need on your team.
 
 ## Problem:
 {problem_statement}
-
 ## Exploration Output:
 {results['output'] if results['success'] else results.get('error', '')}
 
-## Your Task:
-List 1-3 team members you want to recruit. For each, provide:
-- Title (e.g., "ML Engineer", "Data Scientist")
-- Expertise (broad area of knowledge)
-- Role (general contribution area)
+## Instructions:
+You DON'T know the solution yet - the team will figure it out together. Do NOT prescribe specific roles based on how you think the problem should be solved. Instead, identify what broad expertise areas would be valuable.
 
-Format your response as a simple list, one team member per line.
+For each team member, provide:
+- Title: General role (e.g., "Data Scientist", "ML Engineer")
+- Expertise: Broad skills (e.g., "feature engineering, model selection")
+- Role: What perspective they bring (e.g., "propose modeling approaches")
+
+Format your response as a simple list.
 """
 
         recruitment_meeting = IndividualMeeting(
