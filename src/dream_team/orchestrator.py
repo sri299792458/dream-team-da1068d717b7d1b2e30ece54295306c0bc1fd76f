@@ -444,8 +444,7 @@ The PI wants to do initial exploration. Write Python code to implement this:
 2. Inspect the dataframes: print `df.info()`, `df.head()`, `df.columns`.
 3. **CRITICAL**: Do NOT try to merge dataframes. You do not know the keys yet.
 4. ONLY print what you observe - no summaries, interpretations, or conclusions.
-5. Suppress warnings: `import warnings; warnings.filterwarnings('ignore')`
-6. Output ONLY the Python code, wrapped in ```python code blocks.
+5. Output ONLY the Python code, wrapped in ```python code blocks.
 """
 
         code_meeting = IndividualMeeting(
