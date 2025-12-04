@@ -19,10 +19,10 @@ class GeminiLLM:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model_name: str = "gemini-3-pro-preview",
-        temperature: float = 1.0,
+        model_name: str = "gemini-2.5-pro",
+        temperature: float = 0.7,
         max_retries: int = 3,
-        thinking_level: str = "low"  # "low" or "high"
+#         thinking_level: str = "low"  # "low" or "high"
     ):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         if not self.api_key:
@@ -32,7 +32,7 @@ class GeminiLLM:
         self.model_name = model_name
         self.temperature = temperature
         self.max_retries = max_retries
-        self.thinking_level = thinking_level
+#         self.thinking_level = thinking_level
 
         # Simple stats
         self.total_calls = 0
@@ -43,13 +43,13 @@ class GeminiLLM:
         prompt: str,
         system_instruction: Optional[str] = None,
         temperature: Optional[float] = None,
-        thinking_level: Optional[str] = None,
+#         thinking_level: Optional[str] = None,
         response_format: str = "text"  # "text" or "json"
     ) -> str:
         """Generate response with retry logic"""
 
         temp = temperature if temperature is not None else self.temperature
-        think = thinking_level if thinking_level is not None else self.thinking_level
+#         think = thinking_level if thinking_level is not None else self.thinking_level
 
         # Map string thinking level to enum/string expected by SDK
         # "low" -> "THINKING_LEVEL_LOW" or just "LOW" usually works, but let's be safe with string
@@ -57,18 +57,18 @@ class GeminiLLM:
         # Based on research, it's "LOW" or "HIGH" (case insensitive usually)
         
         # Ensure thinking level is valid
-        if think.lower() not in ["low", "high"]:
-            think = "low" # Default fallback
+#         if think.lower() not in ["low", "high"]:
+#             think = "low" # Default fallback
 
         for attempt in range(self.max_retries):
             try:
                 # Configure generation
                 config_args = {
                     "temperature": temp,
-                    "thinking_config": types.ThinkingConfig(
-                        include_thoughts=False, # We usually don't want thoughts in output unless requested
-                        thinking_level=think.upper()
-                    )
+#                     "thinking_config": types.ThinkingConfig(
+#                         include_thoughts=False, # We usually don't want thoughts in output unless requested
+#                         thinking_level=think.upper()
+#                     )
                 }
 
                 if response_format == "json":
@@ -101,14 +101,14 @@ class GeminiLLM:
         prompt: str,
         system_instruction: Optional[str] = None,
         temperature: Optional[float] = None,
-        thinking_level: Optional[str] = None
+#         thinking_level: Optional[str] = None
     ) -> Dict:
         """Generate JSON response"""
         response_text = self.generate(
             prompt,
             system_instruction=system_instruction,
             temperature=temperature,
-            thinking_level=thinking_level,
+#             thinking_level=thinking_level,
             response_format="json"
         )
 
@@ -126,14 +126,14 @@ class GeminiLLM:
         self,
         messages: List[Dict[str, str]],
         temperature: Optional[float] = None,
-        thinking_level: Optional[str] = None
+#         thinking_level: Optional[str] = None
     ) -> str:
         """Multi-turn chat (for meetings)"""
         temp = temperature if temperature is not None else self.temperature
-        think = thinking_level if thinking_level is not None else self.thinking_level
+#         think = thinking_level if thinking_level is not None else self.thinking_level
         
-        if think.lower() not in ["low", "high"]:
-            think = "low"
+#         if think.lower() not in ["low", "high"]:
+#             think = "low"
 
         # Convert to Gemini format
         # messages format: [{"role": "user"/"assistant", "content": "..."}]
@@ -158,10 +158,10 @@ class GeminiLLM:
             history=gemini_contents,
             config=types.GenerateContentConfig(
                 temperature=temp,
-                thinking_config=types.ThinkingConfig(
-                    include_thoughts=False,
-                    thinking_level=think.upper()
-                )
+#                 thinking_config=types.ThinkingConfig(
+#                     include_thoughts=False,
+#                     thinking_level=think.upper()
+#                 )
             )
         )
 

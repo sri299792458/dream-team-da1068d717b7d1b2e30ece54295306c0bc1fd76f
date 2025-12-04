@@ -14,6 +14,7 @@ import json
 import os
 import signal
 from typing import Dict, Any, Optional
+import types  # NEW: for detecting modules
 import pandas as pd
 import numpy as np
 import torch
@@ -33,12 +34,18 @@ def timeout_handler(signum, frame):
 class CodeExecutor:
     """Executes Python code in a controlled environment."""
 
-    def __init__(self, data_context: Dict[str, Any] = None, auto_install: bool = True, max_output_length: int = 100000):
+    def __init__(
+        self,
+        data_context: Dict[str, Any] = None,
+        auto_install: bool = True,
+        max_output_length: int = 100000
+    ):
         """
         Initialize executor with data context.
 
         Args:
-            data_context: Dictionary of data/variables available to executed code
+            data_context: Dictionary of data/variables available to executed code.
+                          IMPORTANT: This is treated as DATA ONLY (no functions/modules).
             auto_install: Whether to automatically install missing packages (default: True)
             max_output_length: Maximum length of output to store (default: 100000 chars)
         """
@@ -72,32 +79,26 @@ class CodeExecutor:
                 'success': bool,
                 'output': stdout output,
                 'error': error message if failed,
-                'variables': dict of new variables created,
-                'metrics': extracted metrics if any
+                'variables': dict of new/modified data variables created,
+                'metrics': extracted metrics if any,
+                'code': executed code,
+                'description': description
             }
         """
         if not silent:
             print(f"\n⚙️ Executing: {description or 'Code block'}")
 
-        # Capture stdout
+        # Capture stdout / stderr
         stdout_capture = io.StringIO()
         stderr_capture = io.StringIO()
         old_stdout = sys.stdout
         old_stderr = sys.stderr
 
-        # Prepare execution environment with SINGLE namespace
-        exec_namespace = {
-            'pd': pd,
-            'np': np,
-            'torch': torch,
-            'Path': Path,
-            '__builtins__': __builtins__,
-        }
+        # Fresh execution environment seeded ONLY with data_context
+        # No pre-injected imports like pd/np/etc; code must import explicitly.
+        exec_namespace = dict(self.data_context)
 
-        # Add data context to namespace
-        exec_namespace.update(self.data_context)
-
-        # Track initial state (keys and object ids) to identify new or modified variables
+        # Track initial state (keys and object ids) to identify new/modified variables
         initial_state = {k: id(v) for k, v in exec_namespace.items()}
 
         result = {
@@ -123,14 +124,12 @@ class CodeExecutor:
 
             try:
                 # Execute code with single namespace
-                # Suppress python warnings
                 import warnings
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     exec(code, exec_namespace)
                 result['success'] = True
             finally:
-                # Cancel timeout if it was set
                 if timeout_set:
                     signal.alarm(0)
 
@@ -140,12 +139,19 @@ class CodeExecutor:
                 result['output_truncated'] = True
                 result['original_output_length'] = len(full_output)
 
-            # Extract NEW or MODIFIED variables created during execution
-            # Use both ID check AND value check for robustness against interned objects
+            # Extract NEW or MODIFIED DATA variables created during execution
+            # We explicitly filter out callables and modules here.
             result['variables'] = {}
             for k, v in exec_namespace.items():
                 if k.startswith('_'):
                     continue
+                # Skip functions, classes, callables
+                if callable(v):
+                    continue
+                # Skip imported modules
+                if isinstance(v, types.ModuleType):
+                    continue
+
                 if k not in initial_state:
                     # Definitely new
                     result['variables'][k] = v
@@ -153,32 +159,39 @@ class CodeExecutor:
                     # Different object ID = modified
                     result['variables'][k] = v
                 else:
-                    # Same ID - could be interned/cached object, check if it was explicitly assigned
-                    # For numeric types, do a value comparison as well
+                    # Same ID - could be interned/cached object, check numeric delta
                     old_val = self.data_context.get(k)
-                    if old_val is not None and isinstance(v, (int, float, np.number)) and isinstance(old_val, (int, float, np.number)):
-                        # If values are different, it was modified (even if same ID due to interning)
+                    if (
+                        old_val is not None
+                        and isinstance(v, (int, float, np.number))
+                        and isinstance(old_val, (int, float, np.number))
+                    ):
                         if not np.isclose(float(v), float(old_val), rtol=1e-9):
                             result['variables'][k] = v
-                    # Note: We skip variables with same ID and same value to avoid false positives
 
-            # Extract metrics ONLY from new/modified variables
-            # This prevents stale metrics from previous iterations from leaking in
-            metric_names = ['mae', 'rmse', 'f1', 'accuracy', 'score', 'cv_scores', 'error', 'loss', 'val_loss', 'auc', 'precision', 'recall']
+            # Extract metrics ONLY from new/modified data variables
+            metric_names = [
+                'mae', 'rmse', 'f1', 'accuracy', 'score',
+                'cv_scores', 'error', 'loss', 'val_loss',
+                'auc', 'precision', 'recall'
+            ]
             result['metrics'] = {
-                k: v for k, v in result['variables'].items()
-                if any(metric in k.lower() for metric in metric_names) and isinstance(v, (int, float, np.number))
+                k: v
+                for k, v in result['variables'].items()
+                if any(metric in k.lower() for metric in metric_names)
+                and isinstance(v, (int, float, np.number))
             }
 
             truncation_note = ""
             if result.get('output_truncated'):
                 truncation_note = f" (output truncated: {result['original_output_length']} → {len(result['output'])} chars)"
+
             if not silent:
                 print(f"   ✅ Success{truncation_note}")
                 if result['metrics']:
                     print(f"   📊 Metrics: {result['metrics']}")
 
-        except TimeoutError as e:
+        except TimeoutError:
             result['success'] = False
             result['error'] = f"Execution timeout ({timeout}s exceeded). Code likely has infinite loop or very long computation."
             result['traceback'] = traceback.format_exc()
@@ -206,7 +219,7 @@ class CodeExecutor:
 
             # Check if it's a ModuleNotFoundError and auto-install is enabled
             if self.auto_install:
-                missing_package = self._extract_missing_module(str(e), result['traceback'])
+                missing_package = self._extract_missing_module(str(e), result.get('traceback', ''))
                 if missing_package:
                     result['missing_package'] = missing_package
 
@@ -214,7 +227,7 @@ class CodeExecutor:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
 
-        # Update data context with new variables
+        # Update data context with new/modified DATA variables only
         if result['success']:
             self.data_context.update(result['variables'])
 
@@ -264,27 +277,24 @@ class CodeExecutor:
     def _truncate_output(self, output: str) -> str:
         """
         Truncate output to max_output_length, keeping most recent content.
-        Also filters out known noisy logs.
+        Also filters out lines containing 'warning' (case-insensitive).
         """
-        # General warning filter (case-insensitive)
-        # Filters any line containing "warning" to be as general as possible
         if "warning" in output.lower():
             lines = output.splitlines(keepends=True)
             output = "".join(
-                line for line in lines 
+                line for line in lines
                 if "warning" not in line.lower()
             )
 
         if len(output) <= self.max_output_length:
             return output
 
-        # Keep first 2000 chars (initial output) and last N chars (final results)
+        # Keep first 2000 chars and last N chars
         first_chunk_size = 2000
         last_chunk_size = self.max_output_length - first_chunk_size - 100
 
         first_chunk = output[:first_chunk_size]
         last_chunk = output[-last_chunk_size:]
-
         truncated_lines = output[first_chunk_size:-last_chunk_size].count('\n')
 
         return (
@@ -382,4 +392,3 @@ def extract_code_from_text(text: str) -> str:
             return chosen.strip()
 
     return text.strip()
-

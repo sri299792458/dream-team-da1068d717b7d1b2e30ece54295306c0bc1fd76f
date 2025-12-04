@@ -530,113 +530,41 @@ class IndividualMeeting(Meeting):
 
     def _react_coding_task(self, agent, task: str, temperature: float, max_steps: int = 2) -> str:
         """
-        ReAct loop for coding tasks: iterative reasoning to plan implementation.
+        Generate implementation code for a coding task.
 
-        Pattern:
-        1. Thought: Think about the approach/architecture
-        2. Thought: Refine the approach and consider edge cases
-        3. Thought: Finalize implementation details
-        4. Final Answer: Write the complete code
+        The `task` string is assumed to already contain:
+        - The team plan / approach
+        - Available data variables and schemas
+        - All environment rules and constraints
 
-        This is internal reasoning only - no external search.
-        Used for coding agent to think through implementation step-by-step.
+        This method does NOT do a multi-step ReAct loop anymore.
+        It simply asks the agent to produce self-contained code
+        that follows the given instructions, and enforces the
+        "output only Python code" contract.
         """
-        print(f"   🧠 {agent.title} using ReAct reasoning...")
+        print(f"   🧠 {agent.title} generating implementation code...")
 
-        reasoning_steps = []
+        prompt = f"""You are implementing a coding task.
 
-        for step in range(max_steps):
-            # Build context from previous thoughts
-            previous_thoughts = ""
-            if reasoning_steps:
-                previous_thoughts = "\n\nPrevious reasoning:\n" + "\n".join([
-                    f"Step {i+1}: {thought}" for i, thought in enumerate(reasoning_steps)
-                ])
+Below is the full task description, including environment details
+and all rules you must follow:
 
-            # Iterative thinking prompts
-            if step == 0:
-                thinking_prompt = f"""You are planning how to implement a coding task.
+{task}
 
-Task: {task}
+Follow ALL instructions in the task above exactly.
 
-CONSTRAINT: All data variables already exist. You will not create or load any data.
-
-Think step-by-step about the APPROACH:
-- What's the overall architecture/structure?
-- What are the main steps?
-- What libraries/methods will you use?
-
-Output only:
-Thought: [Your thinking about the overall approach]
+Output ONLY executable Python code inside a ```python``` code block.
+Do NOT include any explanation, commentary, or text outside the code block.
 """
-            elif step == 1:
-                thinking_prompt = f"""You are refining your implementation plan.
-
-Task: {task}
-{previous_thoughts}
-
-Think step-by-step about IMPLEMENTATION DETAILS:
-- What edge cases need handling?
-- What's the data flow?
-- What features/transformations are needed?
-
-Output only:
-Thought: [Your thinking about implementation details]
-"""
-            else:
-                thinking_prompt = f"""You are finalizing your implementation plan.
-
-Task: {task}
-{previous_thoughts}
-
-Think step-by-step about FINAL DETAILS:
-- Are there any missing pieces?
-- How will you ensure correctness?
-- Any optimizations needed?
-
-Output only:
-Thought: [Your final thoughts before coding]
-"""
-
-            thought = self.llm.generate(
-                thinking_prompt,
-                system_instruction=agent.prompt,
-                temperature=1.0
-            ).strip()
-
-            # Remove "Thought:" prefix if present
-            if thought.startswith('Thought:'):
-                thought = thought.replace('Thought:', '').strip()
-
-            print(f"      Step {step+1}: {thought[:100]}...")
-            reasoning_steps.append(thought)
-
-        # Final: Write code based on all reasoning
-        final_prompt = f"""You are implementing a coding task.
-
-Task: {task}
-
-Your reasoning process:
-{chr(10).join([f"Step {i+1}: {thought}" for i, thought in enumerate(reasoning_steps)])}
-
-Write COMPLETE, EXECUTABLE Python code based on your reasoning.
-
-Constraints:
-- All data variables already exist. Do NOT create, overwrite, or mock them.
-- Use exact column names from the schema provided.
-- Import all required libraries at the top.
-
-Output ONLY the code in ```python blocks.
-"""
-
 
         final_output = self.llm.generate(
-            final_prompt,
+            prompt,
             system_instruction=agent.prompt,
-            temperature=1.0
+            temperature=temperature
         )
 
         return final_output
+
 
     def _optional_search_task(self, agent, task: str, temperature: float, max_steps: int = 2) -> str:
         """

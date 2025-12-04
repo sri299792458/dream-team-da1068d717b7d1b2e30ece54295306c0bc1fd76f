@@ -9,6 +9,8 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 import pandas as pd
 import numpy as np
+import json
+import re
 
 from .agent import Agent
 from .executor import CodeExecutor, extract_code_from_text
@@ -197,8 +199,8 @@ class ExperimentOrchestrator:
             # Update implementation with the code that was actually executed (in case of fixes)
             implementation = results.get('code', implementation)
 
-            # Step 4: Extract metrics
-            metrics = self._extract_metrics(results, target_metric)
+            # Step 4: Extract metrics (NOW handled by PI in reflection)
+            # metrics = self._extract_metrics(results, target_metric) # REMOVED
 
             # ---- Layer 1: log raw execution event ----
             output_text = results.get("output", "") or ""
@@ -211,7 +213,7 @@ class ExperimentOrchestrator:
                 agent=self.coding_agent.title,
                 payload={
                     "success": results["success"],
-                    "metrics": metrics,
+                    # "metrics": metrics,  # Metrics not available yet
                     "description": results.get("description"),
                 },
                 large_data={
@@ -231,8 +233,15 @@ class ExperimentOrchestrator:
                 approach=approach,
                 code=implementation,
                 results=results,
-                metrics=metrics,
             )
+
+            # Step 5.6: Parse iteration's scalar target metric from reflection
+            last_metric = self._parse_iteration_metric_from_reflection(reflection)
+            
+            # Construct metrics dict for this iteration
+            metrics: Dict[str, float] = {}
+            if last_metric is not None:
+                metrics[target_metric] = last_metric
 
             # Log reflection event
             self.event_store.log_event(
@@ -705,12 +714,14 @@ Decide on the next step to improve {self.target_metric}.
 
         return summary.get("summary", summary)
 
-    def _implement_approach(self, approach: str) -> str:
-        """Have coding agent write code to implement the approach"""
+    def _implement_approach(self, approach: str, temperature: float = 1.0) -> str:
+        """Have the coding agent write code to implement the team plan/approach."""
         print(f"💻 {self.coding_agent.title} implementing approach...\n")
 
+        # Column schemas from current data_context (including any new features from previous iterations)
         schema_info = self._format_column_schemas()
 
+        # High-level plan + schema context for the coding agent
         impl_context = self.context_builder.for_coding(
             coding_agent=self.coding_agent,
             team_plan=approach,
@@ -718,56 +729,76 @@ Decide on the next step to improve {self.target_metric}.
             column_schemas=schema_info
         )
 
+        # Data variables available in the executor (data-only, no helper functions)
+        data_keys = list(self.executor.data_context.keys())
+
+        # Project-specific base/raw tables that must not be modified in-place
+        base_table_names = {"batches_train", "batches_test", "products", "sites", "regions"}
+        base_tables = [name for name in data_keys if name in base_table_names]
+
+        # Everything else in data_context is treated as modeling / derived tables
+        modeling_tables = [name for name in data_keys if name not in base_table_names]
+
+        base_tables_block = (
+            "\n".join(f"- {name}" for name in base_tables)
+            if base_tables
+            else "  (none)"
+        )
+        modeling_tables_block = (
+            "\n".join(f"- {name}" for name in modeling_tables)
+            if modeling_tables
+            else "  (none yet — you may create a modeling dataframe such as `train_df`.)"
+        )
+
         task = f"""Implement the team's plan.
 
 {impl_context}
 
 ## EXECUTION ENVIRONMENT
-Pre-loaded variables (use directly, do NOT redefine):
-{list(self.executor.data_context.keys())}
 
-## CRITICAL RULES
-1. Do NOT create, define, or overwrite the pre-loaded variables.
-2. Do NOT generate dummy/mock data.
-3. Use EXACT column names from the schema above.
+The following **data variables** already exist in the environment (provided by the framework):
 
-## REQUIREMENTS
-- Import needed libraries at the top.
-- Use GPU when training models.
-- Compute and print {self.target_metric}.
-- Save expensive models (joblib.dump, torch.save).
-- Suppress verbose output (warnings.filterwarnings('ignore')).
+- Base/raw tables (read-only; do NOT modify these in-place):
+{base_tables_block}
 
-Output ONLY Python code in ```python blocks.
+- Modeling / derived tables (you MAY add new feature columns to these):
+{modeling_tables_block}
+
+You must operate only on these real data objects. Do NOT create any mock or dummy data.
+
+## RULES
+
+1. Do NOT modify the base/raw tables in-place
+   (no new columns or row changes on: {", ".join(base_tables) if base_tables else "none"}).
+   If you need derived data, create new DataFrames or work on modeling tables instead.
+2. You MAY add new feature columns to modeling tables
+   (e.g. `train_df["new_feature"] = ...`), and these features will persist into future iterations.
+3. Use EXACT column names from the schemas above.
+4. Import ALL libraries you need at the top of the code block
+   (e.g., `import pandas as pd`, `import numpy as np`, `import lightgbm as lgb`).
+5. Define ALL helper functions you need (e.g., `prepare_data`, `run_cv_experiment`)
+   inside THIS code block.
+   Do NOT assume that helper functions from previous iterations exist.
+6. Use GPU when training models where the library supports it
+   (e.g., LightGBM with `device="gpu"`).
+7. Compute and print the target metric: {self.target_metric}.
+8. Save expensive models to disk when appropriate (e.g., `joblib.dump`, `torch.save`).
+9. Suppress noisy warnings (e.g., `warnings.filterwarnings("ignore")`).
+
+## OUTPUT
+
+Output ONLY executable Python code inside a ```python``` code block.
 """
 
-        meeting = IndividualMeeting(
-            save_dir=str(self.results_dir / 'meetings'),
-            research_api=self.research.ss_api if hasattr(self, 'research') else None
-        )
-        code_output = meeting.run(
+        # Single-step code generation with the full task (including rules) passed through
+        code_with_block = self._react_coding_task(
             agent=self.coding_agent,
             task=task,
-            num_iterations=1,
-            use_react_coding=True
+            temperature=temperature
         )
 
-        meeting.save(f'iteration_{self.iteration:02d}_coding.json')
+        return code_with_block
 
-        self.event_store.log_event(
-            kind="meeting",
-            iteration=self.iteration,
-            agent=self.coding_agent.title,
-            payload={"type": "coding"}
-        )
-
-        code = extract_code_from_text(code_output)
-
-        code_file = self.results_dir / 'code' / f'iteration_{self.iteration:02d}.py'
-        code_file.parent.mkdir(exist_ok=True)
-        code_file.write_text(code)
-
-        return code
 
     def _execute_implementation(self, code: str) -> Dict[str, Any]:
         """Execute the generated code"""
@@ -1220,62 +1251,46 @@ Output ONLY the complete Python code in ```python``` blocks.
             result += f"{df_name}: {cols}\n"
         return result
 
-    def _extract_metrics(self, results: Dict[str, Any], target_metric: str) -> Dict[str, float]:
-        """Extract metrics from execution results, ensuring JSON-serializable values only"""
-        raw_metrics = results.get('metrics', {})
+    def _parse_iteration_metric_from_reflection(self, reflection: str) -> Optional[float]:
+        """
+        Extract the iteration_target_metric scalar from the reflection's JSON block.
 
-        # Filter to only keep JSON-serializable numeric values
-        metrics = {}
-        for key, value in raw_metrics.items():
-            try:
-                # Only keep simple numeric types
-                if isinstance(value, (int, float, np.integer, np.floating)):
-                    metrics[key] = float(value)
-                elif isinstance(value, (list, np.ndarray)):
-                    # For arrays, take the mean
-                    metrics[key] = float(np.mean(value))
-            except (TypeError, ValueError, AttributeError):
-                # Skip non-numeric or non-serializable values
-                pass
+        Returns:
+            float or None
+        """
+        pattern = r"```json\s*(\{.*?\})\s*```"
+        matches = re.findall(pattern, reflection, flags=re.DOTALL)
+        if not matches:
+            return None
 
-        # Try to find target metric in variables if not in metrics
-        # CRITICAL: Use exact match to avoid false positives (e.g., 'mae' matching 'mae_heuristic')
-        if target_metric not in metrics:
-            for key, value in results.get('variables', {}).items():
-                if key.lower() == target_metric.lower():  # Exact match only
-                    try:
-                        # Handle arrays (take mean)
-                        if hasattr(value, '__iter__') and not isinstance(value, str):
-                            metrics[target_metric] = float(np.mean(value))
-                        else:
-                            metrics[target_metric] = float(value)
-                        break
-                    except (TypeError, ValueError, AttributeError):
-                        pass
+        json_str = matches[-1]  # take the last json block
+        try:
+            data = json.loads(json_str)
+        except Exception:
+            return None
 
-        return metrics
+        value = data.get("iteration_target_metric", None)
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
 
     def _reflect_on_iteration(
         self,
         approach: str,
         code: str,
         results: Dict[str, Any],
-        metrics: Dict[str, float],
     ) -> str:
         """
-        Generate self-reflection on iteration (Reflexion: Shinn et al.)
+        Generate self-reflection on iteration (Reflexion-style).
 
-        After each iteration, explicitly analyze what happened and extract
-        structured learnings to guide future iterations.
-
-        Args:
-            approach: What was attempted
-            code: Implementation
-            results: Execution results
-            metrics: Extracted metrics
-
-        Returns:
-            Reflection text with structured sections
+        IMPORTANT:
+        - We do NOT rely on executor-extracted metrics.
+        - The PI (this LLM) will read the raw output and decide which
+          SINGLE scalar value best represents the target metric for THIS iteration
+          (e.g., a particular MAE, such as best_mae or mae_model_b_control).
+        - The PI will then emit a small JSON summary at the end of the reflection
+          so downstream components can use it programmatically.
         """
         # Prepare output section (Raw output)
         output = results.get('output', '')
@@ -1305,44 +1320,6 @@ Output ONLY the complete Python code in ```python``` blocks.
              for i, attempt in enumerate(results['execution_history'][:-1]):
                  history_section += f"Attempt {attempt['attempt']}:\nError: {attempt['error']}\nCode snippet: {attempt['code'][:200]}...\n\n"
 
-        # Get previous metric for comparison
-        prev_metric = None
-        last_record = None
-        improvement_text = ""
-        if len(self.iteration_records) > 0:
-            last_record = self.iteration_records[-1]
-            prev_metric = last_record.metrics.get(list(metrics.keys())[0]) if metrics else None
-            
-        if last_record and self.target_metric in last_record.metrics:
-                prev_metric = last_record.metrics[self.target_metric]
-                current_metric = metrics.get(self.target_metric)
-                if current_metric is not None and prev_metric is not None:
-                    if self.minimize_metric:
-                        improved = current_metric < prev_metric
-                    else:
-                        improved = current_metric > prev_metric
-                    
-                    if improved:
-                        improvement_text = f"(improved from {prev_metric:.4f})"
-                    else:
-                        improvement_text = f"(no improvement from {prev_metric:.4f})"
-        
-        if not improvement_text and prev_metric is None:
-            improvement_text = "(baseline)"
-        
-        # Format all metrics for display
-        metrics_display = ""
-        if metrics:
-            metrics_display = "\n**Metrics extracted from THIS iteration:**\n"
-            for k, v in metrics.items():
-                is_target = " (TARGET)" if k == self.target_metric else ""
-                metrics_display += f"- {k}: {v:.4f}{is_target}\n"
-            # Add improvement note for target metric
-            if self.target_metric in metrics:
-                metrics_display += f"\n{improvement_text}\n"
-        else:
-            metrics_display = "\n**No metrics were extracted from this iteration's execution.**\n"
-
         # Include context from past reflections for continuity
         past_context = ""
         if len(self.reflection_memory.reflections) > 0:
@@ -1362,11 +1339,18 @@ Output ONLY the complete Python code in ```python``` blocks.
                 past_context += "\n"
 
             # Also show recent metric trajectory for context
-            past_context += "**Recent Metric Trajectory:**\n"
+            past_context += "**Recent Metric Trajectory (per-iteration target metric):**\n"
             for record in self.iteration_records[-3:]:
                 if self.target_metric in record.metrics:
                     past_context += f"- Iteration {record.iteration}: {self.target_metric} = {record.metrics[self.target_metric]:.4f}\n"
             past_context += "\n"
+
+        # Provide previous global best (if any) as context
+        prev_best = self.best_metric
+        if prev_best is None:
+            prev_best_text = "No previous best metric yet (this may be the first iteration)."
+        else:
+            prev_best_text = f"Previous global best {self.target_metric}: {prev_best:.4f}"
 
         reflection_prompt = f"""You are the Principal Investigator reviewing Iteration {self.iteration} of this research experiment.
 {past_context}
@@ -1380,10 +1364,12 @@ Output ONLY the complete Python code in ```python``` blocks.
 
 ## Observations (What happened)
 Execution: {'Successful' if results.get('success') else 'Failed'}
-{metrics_display}
 {output_section}
 {error_section}
 {history_section}
+
+Current global target metric: "{self.target_metric}"
+{prev_best_text}
 
 ---
 
@@ -1406,6 +1392,39 @@ What limitations of the data, approach, or problem did we encounter?
 What approaches can we now rule out and why?
 
 Write as if preparing brief notes for tomorrow's team meeting. Focus on insights that will help the team make better decisions, not prescriptive recommendations.
+
+### 5. Iteration Target Metric (JSON, machine-readable)
+
+From the execution output above (including any "ITERATION X SUMMARY" sections),
+identify the SINGLE scalar value that should be treated as the target metric
+for THIS iteration for metric "{self.target_metric}".
+
+Examples:
+
+If several MAE values are printed (mae_model_a, mae_model_b, best_mae, etc.),
+pick the one that best summarizes performance for this iteration
+(often the best or most relevant MAE, such as best_mae or mae_control).
+
+If the run failed or the metric is unavailable, you may set the value to null.
+
+Then, at the END of your response, output a SINGLE JSON object inside a json code block,
+with this exact structure:
+
+```json
+{{
+  "iteration_target_metric": <numeric value or null>,
+  "metric_name": "<optional original metric name you chose, e.g. 'best_mae' or 'mae_model_b_control'>",
+  "notes": "<very short explanation of why you chose this value>"
+}}
+```
+
+Guidelines:
+
+The JSON must be valid and parseable.
+
+Place the JSON block at the very end of your response.
+
+If no reasonable metric can be extracted, use null for "iteration_target_metric".
 """
 
         reflection = self.llm.generate(
