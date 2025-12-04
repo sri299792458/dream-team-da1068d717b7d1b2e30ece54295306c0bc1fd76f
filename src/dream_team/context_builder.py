@@ -248,18 +248,15 @@ class ContextBuilder:
         context += f"**Error Message:**\n```\n{error}\n```\n\n"
 
         if traceback:
-            # Truncate very long tracebacks
-            tb_preview = traceback[:2000] + "\n... (truncated)" if len(traceback) > 2000 else traceback
-            context += f"**Traceback:**\n```\n{tb_preview}\n```\n\n"
+            context += f"**Traceback:**\n```\n{traceback}\n```\n\n"
 
         # Original approach
         context += "## Original Approach\n\n"
         context += approach + "\n\n"
 
         # Failed code
-        code_preview = failed_code[:1500] + "\n... (truncated)" if len(failed_code) > 1500 else failed_code
         context += "## Failed Code\n\n"
-        context += f"```python\n{code_preview}\n```\n\n"
+        context += f"```python\n{failed_code}\n```\n\n"
 
         # Similar past failures
         similar_failures = self.reflection_memory.query_similar_failures(error)
