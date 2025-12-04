@@ -794,9 +794,16 @@ Output ONLY executable Python code inside a ```python``` code block.
 """
 
         # Single-step code generation with the full task (including rules) passed through
-        code_with_block = self._react_coding_task(
+
+        meeting = IndividualMeeting(
+            save_dir=str(self.results_dir / 'meetings'),
+            research_api=self.research.ss_api if hasattr(self, 'research') else None
+        )
+        code_with_block = meeting.run(
             agent=self.coding_agent,
             task=task,
+            num_iterations=1,
+            use_react_coding=True,
             temperature=temperature
         )
 
