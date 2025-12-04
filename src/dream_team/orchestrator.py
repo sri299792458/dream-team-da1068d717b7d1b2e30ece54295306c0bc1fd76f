@@ -513,7 +513,7 @@ Based on the problem, decide what broad expertise areas you need on your team.
 {results['output'] if results['success'] else results.get('error', '')}
 
 ## Instructions:
-DO NOT overstep by prescribing very specific roles based on how you think the problem should be solved. Let the problem guide the team formation naturally.
+**Important**: DO NOT overstep by prescribing very specific roles based on how you think the problem should be solved.
 
 For each team member, provide:
 - Title: General role (e.g., "Data Scientist", "ML Engineer")
@@ -525,13 +525,13 @@ Format your response as a simple list.
 
         recruitment_meeting = IndividualMeeting(
             save_dir=str(self.results_dir / "meetings"),
-            research_api=self.research.ss_api if hasattr(self, "research") else None,
+            research_api=None,  # No paper search - base recruitment on data observation only
         )
         recruitment_plan = recruitment_meeting.run(
             agent=self.team_lead,
             task=recruitment_task,
             num_iterations=1,
-            use_react=True,
+            use_react=False,  # Simple decision based on what was observed
         )
 
         print(f"Recruitment plan:\n{recruitment_plan}\n")
