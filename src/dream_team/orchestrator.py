@@ -398,7 +398,7 @@ You've received a new research problem. Before assembling a team, you need to un
 ## Problem:
 {problem_statement}
 
-## Available Data:
+## Available Data Variables:
 {list(self.executor.data_context.keys())}
 
 ## Your Task:
@@ -408,6 +408,7 @@ Decide what initial exploration will help you understand:
 3. What expertise you'll need on your team
 
 In 2-3 sentences, describe what exploration code should be written by the coding agent.
+CRITICAL: Do NOT ask to merge dataframes or perform complex analysis yet. You do not know the column names. Focus ONLY on inspecting the raw data structure (columns, types, sample rows).
 """
 
         meeting = IndividualMeeting(
@@ -435,16 +436,16 @@ The PI wants to do initial exploration. Write Python code to implement this:
 {problem_statement}
 
 ## Available in execution context:
-- Pre-imported libraries: pandas (pd), numpy (np), torch, pathlib.Path
 - Variables: {list(self.executor.data_context.keys())}
-  (You can use any of these variables directly in your code)
+  (These variables are already loaded in memory. You can use them directly.)
 
 ## Requirements:
-- Inspect dataframes: print(df.info()), df.head(), df.describe(), df.columns
-- ONLY print what you observe - no summaries, interpretations, or conclusions
-- Use variables from "Available in execution context" above
-- Suppress warnings if needed
-- Output ONLY the Python code, wrapped in ```python code blocks.
+1. **Import necessary libraries** (e.g., `import pandas as pd`, `import numpy as np`). They are NOT pre-imported.
+2. Inspect the dataframes: print `df.info()`, `df.head()`, `df.columns`.
+3. **CRITICAL**: Do NOT try to merge dataframes. You do not know the keys yet.
+4. ONLY print what you observe - no summaries, interpretations, or conclusions.
+5. Suppress warnings: `import warnings; warnings.filterwarnings('ignore')`
+6. Output ONLY the Python code, wrapped in ```python code blocks.
 """
 
         code_meeting = IndividualMeeting(
