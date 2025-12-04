@@ -784,6 +784,9 @@ You must operate only on these real data objects. Do NOT create any mock or dumm
 7. Compute and print the target metric: {self.target_metric}.
 8. Save expensive models to disk when appropriate (e.g., `joblib.dump`, `torch.save`).
 9. Suppress noisy warnings (e.g., `warnings.filterwarnings("ignore")`).
+10. Keep the computation reasonable: design training/evaluation so that a single run of this script
+   can finish within an hour. Avoid very large hyperparameter sweeps, nested CV,
+   or anything that obviously requires hours of compute.
 
 ## OUTPUT
 

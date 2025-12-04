@@ -134,6 +134,7 @@ Requirements:
 - Make FINAL DECISIONS. Do not ask clarifying questions.
 - Be specific: name the exact methods, features, or approaches to implement.
 - The code will be written by the coding agent, your job is to only convey what has to be implemented.
+- Keep the concrete plan for THIS iteration reasonably runnable within an hour, by avoiding suggesting things like large hyperparameter sweeps or long-running training jobs.
 - **Important**: Do not write the code yourself.
 
 Output 1-2 focused paragraphs.
