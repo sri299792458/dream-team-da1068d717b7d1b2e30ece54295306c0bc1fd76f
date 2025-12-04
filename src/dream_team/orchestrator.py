@@ -807,7 +807,7 @@ Output ONLY executable Python code inside a ```python``` code block.
             temperature=temperature
         )
 
-        return code_with_block
+        return extract_code_from_text(code_with_block)
 
 
     def _execute_implementation(self, code: str) -> Dict[str, Any]:
