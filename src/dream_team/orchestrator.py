@@ -193,6 +193,11 @@ class ExperimentOrchestrator:
             # Step 2: Agent implements the approach (writes code)
             implementation = self._implement_approach(approach)
 
+            # Save implementation code
+            code_file = self.results_dir / "code" / f"iteration_{self.iteration:02d}.py"
+            code_file.parent.mkdir(exist_ok=True)
+            code_file.write_text(implementation)
+
             # Step 3: Execute code and get results (with automatic error recovery)
             results = self._execute_with_retry(implementation, approach, max_retries=2)
             
