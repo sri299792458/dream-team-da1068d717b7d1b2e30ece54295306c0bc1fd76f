@@ -1284,13 +1284,9 @@ Output ONLY the complete Python code in ```python``` blocks.
         """
         Generate self-reflection on iteration (Reflexion-style).
 
-        IMPORTANT:
-        - We do NOT rely on executor-extracted metrics.
-        - The PI (this LLM) will read the raw output and decide which
-          SINGLE scalar value best represents the target metric for THIS iteration
-          (e.g., a particular MAE, such as best_mae or mae_model_b_control).
-        - The PI will then emit a small JSON summary at the end of the reflection
-          so downstream components can use it programmatically.
+        The PI focuses primarily on qualitative reflection.
+        At the very end, they also emit a small JSON summary with
+        a single scalar target metric for this iteration.
         """
         # Prepare output section (Raw output)
         output = results.get('output', '')
@@ -1298,7 +1294,7 @@ Output ONLY the complete Python code in ```python``` blocks.
             output_preview = output[:5000] + "\n... (truncated)"
         else:
             output_preview = output
-        
+
         output_section = f"""
 ## Execution Output (Raw)
 {output_preview}
@@ -1316,9 +1312,13 @@ Output ONLY the complete Python code in ```python``` blocks.
 
         history_section = ""
         if 'execution_history' in results and len(results['execution_history']) > 1:
-             history_section = "\n## Previous Failed Attempts\n"
-             for i, attempt in enumerate(results['execution_history'][:-1]):
-                 history_section += f"Attempt {attempt['attempt']}:\nError: {attempt['error']}\nCode snippet: {attempt['code'][:200]}...\n\n"
+            history_section = "\n## Previous Failed Attempts\n"
+            for i, attempt in enumerate(results['execution_history'][:-1]):
+                history_section += (
+                    f"Attempt {attempt['attempt']}:\n"
+                    f"Error: {attempt['error']}\n"
+                    f"Code snippet: {attempt['code'][:200]}...\n\n"
+                )
 
         # Include context from past reflections for continuity
         past_context = ""
@@ -1330,11 +1330,11 @@ Output ONLY the complete Python code in ```python``` blocks.
                 past_context += f"### Iteration {ref.iteration}\n"
                 if ref.key_insights:
                     past_context += "**Key Insights:**\n"
-                    for insight in ref.key_insights[:2]:  # Top 2 insights
+                    for insight in ref.key_insights[:2]:
                         past_context += f"- {insight}\n"
                 if ref.dead_ends:
                     past_context += "**Dead Ends:**\n"
-                    for de in ref.dead_ends[:2]:  # Top 2 dead ends
+                    for de in ref.dead_ends[:2]:
                         past_context += f"- {de}\n"
                 past_context += "\n"
 
@@ -1342,10 +1342,13 @@ Output ONLY the complete Python code in ```python``` blocks.
             past_context += "**Recent Metric Trajectory (per-iteration target metric):**\n"
             for record in self.iteration_records[-3:]:
                 if self.target_metric in record.metrics:
-                    past_context += f"- Iteration {record.iteration}: {self.target_metric} = {record.metrics[self.target_metric]:.4f}\n"
+                    past_context += (
+                        f"- Iteration {record.iteration}: "
+                        f"{self.target_metric} = {record.metrics[self.target_metric]:.4f}\n"
+                    )
             past_context += "\n"
 
-        # Provide previous global best (if any) as context
+        # Previous global best (if any) as context
         prev_best = self.best_metric
         if prev_best is None:
             prev_best_text = "No previous best metric yet (this may be the first iteration)."
@@ -1362,7 +1365,8 @@ Output ONLY the complete Python code in ```python``` blocks.
 {code}
 ```
 
-## Observations (What happened)
+Observations (What happened)
+
 Execution: {'Successful' if results.get('success') else 'Failed'}
 {output_section}
 {error_section}
@@ -1371,60 +1375,55 @@ Execution: {'Successful' if results.get('success') else 'Failed'}
 Current global target metric: "{self.target_metric}"
 {prev_best_text}
 
----
-
-## Reflection
+Reflection
 
 As the research lead, analyze this iteration scientifically, taking into account the trajectory of past iterations:
 
-### 1. Understanding
+1. Understanding
+
 What did this experiment teach us about the problem?
 What assumptions were validated or invalidated?
 
-### 2. Attribution  
-If results improved: What specifically drove the improvement?
-If results didn't improve or failed: What was the root cause? (Not symptoms - dig deep)
+2. Attribution
 
-### 3. Constraints Discovered
+If results improved: What specifically drove the improvement?
+If results didn't improve or failed: What was the root cause? (not symptoms – dig deep)
+
+3. Constraints Discovered
+
 What limitations of the data, approach, or problem did we encounter?
 
-### 4. Dead Ends
+4. Dead Ends
+
 What approaches can we now rule out and why?
 
 Write as if preparing brief notes for tomorrow's team meeting. Focus on insights that will help the team make better decisions, not prescriptive recommendations.
 
-### 5. Iteration Target Metric (JSON, machine-readable)
+5. Iteration Target Metric (brief JSON)
 
-From the execution output above (including any "ITERATION X SUMMARY" sections),
-identify the SINGLE scalar value that should be treated as the target metric
-for THIS iteration for metric "{self.target_metric}".
+AFTER you have written the reflection above, choose a SINGLE scalar value
+from the execution output that should count as the target metric for THIS iteration
+for metric "{self.target_metric}" (for example, the most relevant MAE such as a
+'best_mae' or 'mae_control' value). If nothing sensible is available, use null.
 
-Examples:
-
-If several MAE values are printed (mae_model_a, mae_model_b, best_mae, etc.),
-pick the one that best summarizes performance for this iteration
-(often the best or most relevant MAE, such as best_mae or mae_control).
-
-If the run failed or the metric is unavailable, you may set the value to null.
-
-Then, at the END of your response, output a SINGLE JSON object inside a json code block,
+At the VERY END of your response, append a single JSON object inside a json block
 with this exact structure:
 
 ```json
 {{
   "iteration_target_metric": <numeric value or null>,
-  "metric_name": "<optional original metric name you chose, e.g. 'best_mae' or 'mae_model_b_control'>",
+  "metric_name": "<original metric name you chose or null>",
   "notes": "<very short explanation of why you chose this value>"
 }}
 ```
 
-Guidelines:
+Requirements:
 
 The JSON must be valid and parseable.
 
-Place the JSON block at the very end of your response.
+Place the json block at the very end of your response, after all reflection text.
 
-If no reasonable metric can be extracted, use null for "iteration_target_metric".
+Do not add any extra text after the JSON block.
 """
 
         reflection = self.llm.generate(
