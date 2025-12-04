@@ -513,7 +513,7 @@ Based on the problem, decide what broad expertise areas you need on your team.
 {results['output'] if results['success'] else results.get('error', '')}
 
 ## Instructions:
-You DON'T know the solution yet - the team will figure it out together. Do NOT prescribe specific roles based on how you think the problem should be solved. Instead, identify what broad expertise areas would be valuable.
+DO NOT overstep by prescribing very specific roles based on how you think the problem should be solved. Let the problem guide the team formation naturally.
 
 For each team member, provide:
 - Title: General role (e.g., "Data Scientist", "ML Engineer")
