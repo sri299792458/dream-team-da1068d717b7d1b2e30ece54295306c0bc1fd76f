@@ -133,7 +133,7 @@ Write your FINAL SYNTHESIS based on your reasoning.
 Requirements:
 - Make FINAL DECISIONS. Do not ask clarifying questions.
 - Be specific: name the exact methods, features, or approaches to implement.
-- You should only convey what has to be implemented clearly, the code will be written by the coding agent.
+- **Important**: The code will be written by the coding agent, your job is to only convey what has to be implemented.
 
 Output 1-2 focused paragraphs.
 """
@@ -229,10 +229,7 @@ Keep it concise (1-2 paragraphs).
                     # Inject KB context
                     kb_data = member.knowledge_base.collect_for_intent("plan_next_iteration")
                     kb_context = ""
-                    if kb_data["patterns"]:
-                        kb_context += "\nYour Past Successes:\n" + "\n".join([f"- {p}" for p in kb_data["patterns"]])
-                    if kb_data["techniques"]:
-                        kb_context += "\nYour Mastered Techniques:\n" + "\n".join([f"- {t}" for t in kb_data["techniques"]])
+
                     if kb_data["pitfalls"]:
                         kb_context += "\nPitfalls to Avoid:\n" + "\n".join([f"- {p}" for p in kb_data["pitfalls"]])
                     if kb_data["papers"]:
@@ -304,6 +301,10 @@ Rules:
 
         metadata = self.llm.generate_json(metadata_prompt, temperature=1.0)
 
+        # Validate metadata is a dict (LLM might return a list or other type)
+        if not isinstance(metadata, dict):
+            metadata = {}
+
         # Return team lead's synthesis as the main summary
         return {
             "summary": final_synthesis,  # The detailed action plan
@@ -337,10 +338,7 @@ Rules:
         # Inject KB context
         kb_data = agent.knowledge_base.collect_for_intent("plan_next_iteration")
         kb_context = ""
-        if kb_data["patterns"]:
-            kb_context += "\nYour Past Successes:\n" + "\n".join([f"- {p}" for p in kb_data["patterns"]])
-        if kb_data["techniques"]:
-            kb_context += "\nYour Mastered Techniques:\n" + "\n".join([f"- {t}" for t in kb_data["techniques"]])
+
 
         initial_prompt = f"""You are {agent.title} participating in a team meeting.
 
