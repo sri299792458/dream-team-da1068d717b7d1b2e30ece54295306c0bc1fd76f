@@ -872,7 +872,7 @@ Output ONLY Python code in ```python blocks.
                         if manual_file.exists():
                             current_code = manual_file.read_text()
                             print(f"   ✅ Loaded manual fix from {manual_file.name}. Retrying...")
-                            attempt += 1
+                            # Don't increment attempt for manual fixes - allow infinite manual retries
                             continue
                         else:
                             print("   ⚠️ File not found. Proceeding with auto-fix.")
