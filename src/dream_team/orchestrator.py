@@ -1482,39 +1482,14 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
         
         # Create policy config
         config = EvolutionPolicyConfig(
-            min_per_role={"lead": 1, "coder": 1},
-            max_team_size=6,
+            min_per_role={},
+            max_team_size=4,
             min_team_size=3,
             gap_threshold=0.3,
             max_concepts_per_new_agent=3
         )
         
         policy = DefaultEvolutionPolicy(config)
-        
-        # Register core agents
-        # PI / Lead
-        policy.register_agent(
-            self.team_lead,
-            AgentMeta(
-                id=self.team_lead.title,
-                title=self.team_lead.title,
-                role="lead",
-                core=True,
-                tags=["leadership", "planning", "synthesis"]
-            )
-        )
-        
-        # Coder
-        policy.register_agent(
-            self.coding_agent,
-            AgentMeta(
-                id=self.coding_agent.title,
-                title=self.coding_agent.title,
-                role="coder",
-                core=True,
-                tags=["python", "implementation", "debugging"]
-            )
-        )
         
         # Register initial team members
         for agent in self.team_members:
@@ -1544,7 +1519,7 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
                 self.evolution_agent.policy = policy
                 # Update agent refs in team state
                 if self.evolution_agent.team_state:
-                    self.evolution_agent.update_team(self.all_agents)
+                    self.evolution_agent.update_team(self.team_members)
                 print("   ✅ Evolution state restored")
                 return
             except Exception as e:
@@ -1561,7 +1536,7 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
         )
         
         self.evolution_agent.initialize(
-            agents=self.all_agents,
+            agents=self.team_members,
             problem_statement=problem_statement,
             target_metric=target_metric,
             minimize_metric=minimize_metric,
@@ -1662,11 +1637,7 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
         
         # 1. Handle deletions
         for agent_to_remove in decision.agents_to_delete:
-            # Don't remove the lead or coding agent!
-            if agent_to_remove == self.team_lead or agent_to_remove == self.coding_agent:
-                print(f"   ⚠️  Skipping removal of critical agent: {agent_to_remove.title}")
-                continue
-                
+            print(f"   🗑️  Removing agent: {agent_to_remove.title}")
             if agent_to_remove in self.team_members:
                 self.team_members.remove(agent_to_remove)
                 changes_made.append(f"❌ Removed {agent_to_remove.title}")
@@ -1695,7 +1666,7 @@ Write as if preparing brief notes for tomorrow's team meeting. Focus on insights
         self.all_agents = [self.team_lead] + self.team_members
         
         # Sync new team state to evolution agent
-        self.evolution_agent.update_team(self.all_agents)
+        self.evolution_agent.update_team(self.team_members)
         
         print("\n🔄 Team Evolution Complete:")
         for change in changes_made:

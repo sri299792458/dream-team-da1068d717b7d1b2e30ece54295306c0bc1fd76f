@@ -189,7 +189,7 @@ Keep it concise (1-2 paragraphs).
         print(f"   Rounds: {num_rounds}\n")
 
         # Opening: Team lead sets context
-        opening_prompt = f"""You are leading a team meeting.
+        opening_prompt = f"""You are leading a scientific team meeting.
 
 Agenda: {agenda}
 
@@ -237,7 +237,7 @@ Keep it concise (1-2 paragraphs).
                         kb_context += "\nRelevant Research:\n" + "\n".join([f"- {p}" for p in kb_data["papers"]])
 
                     response = self.llm.generate(
-                        f"""You are participating in a team meeting.
+                        f"""You are participating in a scientific team meeting.
 
 Agenda: {agenda}
 
@@ -247,7 +247,7 @@ Discussion so far:
 Relevant past learnings:
 {kb_context}
 
-Provide your input as {member.title}. Reference past learnings where directly applicable.
+Provide your input as {member.title}. The goal is to have a constructive scientific discussion.
 Keep it concise (1-2 paragraphs).
 """,
                         system_instruction=member.prompt,
@@ -341,7 +341,7 @@ Rules:
         kb_context = ""
 
 
-        initial_prompt = f"""You are {agent.title} participating in a team meeting.
+        initial_prompt = f"""You are {agent.title} participating in a scientific team meeting.
 
 Agenda: {agenda}
 

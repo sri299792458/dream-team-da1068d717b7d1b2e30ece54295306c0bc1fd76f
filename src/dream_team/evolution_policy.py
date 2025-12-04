@@ -29,7 +29,7 @@ class AgentMeta:
 class EvolutionPolicyConfig:
     """Configuration for evolution policy."""
     min_per_role: Dict[str, int] = field(default_factory=dict)   # e.g. {"lead": 1, "coder": 1}
-    max_team_size: int = 6
+    max_team_size: int = 5
     min_team_size: int = 3
     gap_threshold: float = 0.3           
     max_concepts_per_new_agent: int = 3
