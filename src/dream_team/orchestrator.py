@@ -505,7 +505,7 @@ The PI wants to do initial exploration. Write Python code to implement this:
         print(f"\n{self.team_lead.title} reviewing exploration results and recruiting team...\n")
 
         recruitment_task = f"""
-Based on the problem and exploration results, decide what expertise you need on your team.
+Based on the problem and exploration results, decide what broad expertise areas you need on your team.
 
 ## Problem:
 {problem_statement}
@@ -515,11 +515,9 @@ Based on the problem and exploration results, decide what expertise you need on 
 
 ## Your Task:
 List 1-3 team members you want to recruit. For each, provide:
-- Title (e.g., "ML Engineer", "Microbiologist")
-- Expertise (what they should know)
-- Role (what they'll contribute)
-
-Be specific about the skills needed based on what you learned from exploration and research papers.
+- Title (e.g., "ML Engineer", "Data Scientist")
+- Expertise (broad area of knowledge)
+- Role (general contribution area)
 
 Format your response as a simple list, one team member per line.
 """

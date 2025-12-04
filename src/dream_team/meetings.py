@@ -133,7 +133,8 @@ Write your FINAL SYNTHESIS based on your reasoning.
 Requirements:
 - Make FINAL DECISIONS. Do not ask clarifying questions.
 - Be specific: name the exact methods, features, or approaches to implement.
-- **Important**: The code will be written by the coding agent, your job is to only convey what has to be implemented.
+- The code will be written by the coding agent, your job is to only convey what has to be implemented.
+- **Important**: Do not write the code yourself.
 
 Output 1-2 focused paragraphs.
 """
