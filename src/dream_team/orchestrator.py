@@ -1568,6 +1568,7 @@ Do not add any extra text after the JSON block.
 
 
         # Replay history if we have records but no evolution state (fresh init on resume)
+        state_file = self.results_dir / "evolution_state.json"
         if self.iteration_records and not state_file.exists():
             print("   🔄 Replaying history into Evolution Agent...")
             for record in self.iteration_records:
