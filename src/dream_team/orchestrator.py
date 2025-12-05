@@ -23,6 +23,7 @@ from .context import Reflection, ReflectionMemory
 from .event_store import EventStore
 from .semantic_state import IterationRecord
 from .context_builder import ContextBuilder
+from .interactive_control import InteractiveController, create_evolution_proposal
 
 
 class ExperimentOrchestrator:
@@ -59,6 +60,9 @@ class ExperimentOrchestrator:
         self.evolution_decision: Optional[EvolutionDecision] = None
         self.executor: Optional[CodeExecutor] = None  # Created when run() is called
         self.research = get_research_assistant()
+
+        # Interactive Controller
+        self.interactive_controller = InteractiveController(enabled=interactive_mode)
 
         # Get LLM for query generation and other tasks
         from .llm import get_llm
@@ -155,6 +159,7 @@ class ExperimentOrchestrator:
         
         if interactive_mode is not None:
             self.interactive_mode = interactive_mode
+            self.interactive_controller.enabled = interactive_mode
 
         # Resume logic
         start_iteration = 1
@@ -248,6 +253,14 @@ class ExperimentOrchestrator:
             if last_metric is not None:
                 metrics[target_metric] = last_metric
 
+            # Interactive check: Reflection steering
+            self.interactive_controller.check_reflection(
+                reflection_text=reflection,
+                iteration=self.iteration,
+                metrics=metrics,
+                target_metric=target_metric
+            )
+
             # Log reflection event
             self.event_store.log_event(
                 kind="reflection",
@@ -306,7 +319,8 @@ class ExperimentOrchestrator:
                     reflection_text=reflection,
                     iteration=self.iteration,
                     reflection_obj=reflection_obj,
-                    reflection_memory=self.reflection_memory
+                    reflection_memory=self.reflection_memory,
+                    interactive_controller=self.interactive_controller
                 )
 
             # Step 7: update agents' KnowledgeBases from semantic state
@@ -691,6 +705,8 @@ Decide on the next step to improve {self.target_metric}.
 {columns_summary}
 
 {base_context}
+
+{self.interactive_controller.get_accumulated_feedback()}
 
 ## Roles:
 - **Team Members**: Review recent iterations and propose what to do next.
@@ -1656,6 +1672,40 @@ Do not add any extra text after the JSON block.
                 print(f"      → {decision.debug_info['note']}")
             else:
                 print("      → No coverage gaps and no weak overlap detected")
+            return False
+
+        # Interactive check
+        proposal = create_evolution_proposal(decision, self.team_members)
+        
+        prev_metric = None
+        if len(self.iteration_records) > 1:
+             prev_metric = self.iteration_records[-2].metrics.get(target_metric)
+
+        current_val = metrics.get(target_metric)
+
+        approved, feedback, modified = self.interactive_controller.check_evolution_proposal(
+            proposal=proposal,
+            current_iteration=self.iteration,
+            current_metric=current_val,
+            last_metric=prev_metric,
+            target_metric=target_metric
+        )
+
+        if not approved:
+            print("   ⛔ Evolution rejected by user.")
+            self.evolution_decision = None # Clear decision
+            return False
+            
+        if modified:
+             if "agents_to_add" in modified:
+                 kept_titles = {a['title'] for a in modified['agents_to_add']}
+                 decision.new_agent_specs = [s for s in decision.new_agent_specs if s.title in kept_titles]
+                 
+             if "agents_to_remove" in modified:
+                 kept_names = set(modified['agents_to_remove'])
+                 decision.agents_to_delete = [a for a in decision.agents_to_delete if getattr(a, 'title', str(a)) in kept_names]
+                 
+             print("   ✅ Evolution proposal modified by user.")
 
         return bool(decision.new_agent_specs or decision.agents_to_delete)
 

@@ -989,7 +989,9 @@ Rules:
         reflection_text: str,
         iteration: int,
         reflection_obj: Optional[Any] = None,
-        reflection_memory: Optional[Any] = None  # NEW: Access to all past reflections
+
+        reflection_memory: Optional[Any] = None,  # NEW: Access to all past reflections
+        interactive_controller: Optional[Any] = None
     ) -> None:
         """
         Refine the concept space based on latest iteration learnings.
@@ -1122,6 +1124,34 @@ Remove concepts (importance=0) that proved irrelevant or are dead ends.
         if not new_concepts:
             # Keep existing if refinement failed
             return
+
+        # Interactive check
+        if interactive_controller:
+             old_concepts_list = list(self._concept_space.concepts.keys())
+             new_concepts_list = list(new_concepts.keys())
+             approved, modified_list = interactive_controller.check_concept_changes(old_concepts_list, new_concepts_list, iteration)
+             
+             if not approved:
+                 print("   🧠 Concept changes rejected by user.")
+                 return
+                 
+             if modified_list:
+                 print("   🧠 Concept changes modified by user.")
+                 # Rebuild new_concepts from modified_list
+                 rebuilt_concepts = {}
+                 for name in modified_list:
+                     if name in new_concepts:
+                         rebuilt_concepts[name] = new_concepts[name]
+                     elif self._concept_space and name in self._concept_space.concepts:
+                          rebuilt_concepts[name] = self._concept_space.concepts[name]
+                     else:
+                          rebuilt_concepts[name] = Concept(
+                              name=name,
+                              importance=2.0,
+                              category=ConceptCategory.DOMAIN,
+                              source="user_manual"
+                          )
+                 new_concepts = rebuilt_concepts
         
         # Replace concept space
         self._concept_space = ConceptSpace(concepts=new_concepts)
