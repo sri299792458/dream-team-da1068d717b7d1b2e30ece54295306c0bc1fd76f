@@ -249,6 +249,8 @@ class CodeExecutor:
 
         Returns the result of first successful execution or last failure.
         """
+        attempted_packages = set()
+
         for attempt in range(max_retries + 1):
             result = self.execute(code, description)
             if result['success']:
@@ -257,6 +259,14 @@ class CodeExecutor:
             # Check if failure was due to missing package
             if 'missing_package' in result and self.auto_install:
                 package = result['missing_package']
+                
+                # Prevent infinite loop: if we already tried this package, don't try again
+                if package in attempted_packages:
+                    print(f"   ⚠️ Package {package} already attempted, stopping retries.")
+                    break
+                
+                attempted_packages.add(package)
+                
                 if self._install_package(package):
                     print(f"   🔄 Retrying after installing {package}...")
                     continue
