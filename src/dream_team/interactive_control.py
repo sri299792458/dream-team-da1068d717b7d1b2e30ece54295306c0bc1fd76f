@@ -189,8 +189,8 @@ class InteractiveController:
 📊 EVOLUTION PROPOSAL (Iteration {current_iteration})
 
 Current Performance:
-  • {target_metric}: {current_metric:.4f if current_metric else 'N/A'}
-  • Best so far: {self.performance_guard.best_metric:.4f if self.performance_guard.best_metric else 'N/A'}
+  • {target_metric}: {f'{current_metric:.4f}' if current_metric is not None else 'N/A'}
+  • Best so far: {f'{self.performance_guard.best_metric:.4f}' if self.performance_guard.best_metric is not None else 'N/A'}
 
 Guard Status: {guard_reason}
 
@@ -294,8 +294,8 @@ Proposed Changes:
         summary = f"""
 🤔 PI REFLECTION (Iteration {iteration})
 
-Metrics: {', '.join(f'{k}={v:.4f}' for k,v in metrics.items())}
-Best {target_metric}: {self.performance_guard.best_metric:.4f if self.performance_guard.best_metric else 'N/A'}
+Metrics: {', '.join(f'{k}={v:.4f}' for k,v in metrics.items() if v is not None)}
+Best {target_metric}: {f'{self.performance_guard.best_metric:.4f}' if self.performance_guard.best_metric is not None else 'N/A'}
 
 --- Reflection (truncated) ---
 {reflection_text[:1500]}{'...' if len(reflection_text) > 1500 else ''}

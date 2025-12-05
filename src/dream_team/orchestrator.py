@@ -254,12 +254,8 @@ class ExperimentOrchestrator:
                 metrics[target_metric] = last_metric
 
             # Interactive check: Reflection steering
-            self.interactive_controller.check_reflection(
-                reflection_text=reflection,
-                iteration=self.iteration,
-                metrics=metrics,
-                target_metric=target_metric
-            )
+            # Interactive check: Reflection steering (REMOVED per user request for simplicity)
+            # self.interactive_controller.check_reflection(...)
 
             # Log reflection event
             self.event_store.log_event(
@@ -361,6 +357,19 @@ class ExperimentOrchestrator:
             if self.best_metric is not None:
                 print(f"Best {target_metric} so far: {self.best_metric:.4f}")
             print(f"{'=' * 60}\n")
+
+            # Simple interactive pause that captures feedback
+            if self.interactive_mode:
+                user_input = input(f"\n[Interactive Mode] Iteration {self.iteration} complete.\nPress Enter to continue, or type feedback/instructions for the team: ").strip()
+                
+                if user_input:
+                    # Store feedback to be injected into the next team meeting
+                    self.interactive_controller.user_notes.append({
+                        "iteration": self.iteration,
+                        "type": "steering",
+                        "feedback": user_input
+                    })
+                    print("   ✅ Feedback recorded for next team meeting.")
 
             # Step 8: Check if goal achieved
             if self._check_goal_achieved(metrics, target_metric, target_score, minimize_metric):
@@ -685,8 +694,13 @@ Rules:
             for df_name, cols in self.column_schemas.items():
                 columns_summary += f"\n{df_name}: {cols}\n"
 
+        # Inject user feedback if available
+        user_feedback = self.interactive_controller.get_accumulated_feedback()
+        
         agenda = f"""
 **BE CONCISE.**
+
+{user_feedback}
 
 ## Problem:
 {problem_statement}
