@@ -15,7 +15,7 @@ import re
 from .agent import Agent
 from .executor import CodeExecutor, extract_code_from_text
 from .meetings import TeamMeeting, IndividualMeeting
-from .evolution_agent import EvolutionAgent, EvolutionDecision
+from .grounded_evolution import GroundedEvolutionAgent, GroundedEvolutionDecision
 from .evolution_policy import DefaultEvolutionPolicy, EvolutionPolicyConfig, AgentMeta
 from .research import get_research_assistant
 from .utils import save_json
@@ -56,8 +56,8 @@ class ExperimentOrchestrator:
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
         self.interactive_mode = interactive_mode
-        self.evolution_agent: Optional[EvolutionAgent] = None  # Will be initialized in run()
-        self.evolution_decision: Optional[EvolutionDecision] = None
+        self.evolution_agent: Optional[GroundedEvolutionAgent] = None  # Will be initialized in run()
+        self.evolution_decision: Optional[GroundedEvolutionDecision] = None
         self.executor: Optional[CodeExecutor] = None  # Created when run() is called
         self.research = get_research_assistant()
 
@@ -310,17 +310,15 @@ class ExperimentOrchestrator:
                         else:
                             improved = curr_metric > prev_metric
                 
-                self.evolution_agent.refine_concept_space(
-                    problem_statement=self.problem_statement,
-                    target_metric=target_metric,
-                    last_approach=approach,
-                    last_metric=metrics.get(target_metric, 0.0),
-                    improved=improved,
-                    reflection_text=reflection,
+                # Record iteration in GroundedEvolutionAgent
+                self.evolution_agent.record_iteration(
                     iteration=self.iteration,
+                    metric=metrics.get(target_metric, 0.0),
+                    code=implementation,
+                    approach=approach,
+                    contributing_agents=[m.title for m in self.team_members],
+                    reflection_text=reflection,
                     reflection_obj=reflection_obj,
-                    reflection_memory=self.reflection_memory,
-                    interactive_controller=self.interactive_controller
                 )
 
             # Step 7: update agents' KnowledgeBases from semantic state
@@ -732,6 +730,18 @@ Decide on the next step to improve {self.target_metric}.
             agent=self.team_lead.title,
             payload={"type": "team"},
         )
+
+        # Record contributions for Grounded Evolution
+        if self.evolution_agent:
+            # Simple attribution: everyone in the meeting contributed
+            # Future: Parse meeting transcript to see who proposed what
+            for member in self.team_members:
+                self.evolution_agent.record_agent_contribution(
+                    agent_title=member.title,
+                    iteration=self.iteration,
+                    role="proposer",
+                    techniques_mentioned=[] # TODO: Extract techniques from transcript
+                )
 
         return summary.get("summary", summary)
 
@@ -1527,72 +1537,21 @@ Do not add any extra text after the JSON block.
 
     def _initialize_evolution_agent(self, problem_statement: str, target_metric: str, minimize_metric: bool):
         """Initialize the evolution agent with policy."""
-        print("\n🧬 Initializing Evolution Agent with Policy...")
-        
-        # Create policy config
-        config = EvolutionPolicyConfig(
-            min_per_role={},
-            max_team_size=4,
-            min_team_size=3,
-            gap_threshold=0.3,
-            max_concepts_per_new_agent=3
-        )
-        
-        policy = DefaultEvolutionPolicy(config)
-        
-        # Register initial team members
-        for agent in self.team_members:
-            # Infer tags from expertise string
-            tags = [t.strip() for t in agent.expertise.split(',')]
-            policy.register_agent(
-                agent,
-                AgentMeta(
-                    id=agent.title,
-                    title=agent.title,
-                    role="member",  # Generic role for now
-                    core=False,
-                    tags=tags
-                )
-            )
-
-        # Check if we can restore state
-        state_file = self.results_dir / "evolution_state.json"
-        if state_file.exists():
-            print(f"   🔄 Loading evolution state from {state_file}...")
-            try:
-                import json
-                with open(state_file, 'r') as f:
-                    data = json.load(f)
-                self.evolution_agent = EvolutionAgent.from_dict(data, self.llm)
-                # We still need to ensure policy is set (from_dict might not set it fully if not in dict)
-                self.evolution_agent.policy = policy
-                # Update agent refs in team state
-                if self.evolution_agent.team_state:
-                    self.evolution_agent.update_team(self.team_members)
-                print("   ✅ Evolution state restored")
-                return
-            except Exception as e:
-                print(f"   ⚠️ Failed to restore evolution state: {e}")
-                # Fall through to fresh initialization
-
-        self.evolution_agent = EvolutionAgent(
+        self.evolution_agent = GroundedEvolutionAgent(
             llm=self.llm,
-            target_team_size=(3, 6),
-            gap_threshold=0.3,
-            specialize_overlap_threshold=0.4,
-            specialize_gini_threshold=0.5,
-            policy=policy
+            min_team_size=3,
+            max_team_size=5,
+            probation_length=3,
+            evolution_cooldown=2,
         )
         
         self.evolution_agent.initialize(
-            agents=self.team_members,
             problem_statement=problem_statement,
-            target_metric=target_metric,
+            agents=self.team_members,
             minimize_metric=minimize_metric,
-            column_schemas=self.column_schemas,
-            techniques=None
         )
         print("   ✓ Evolution agent initialized")
+
 
         # Replay history if we have records but no evolution state (fresh init on resume)
         if self.iteration_records and not state_file.exists():
@@ -1601,9 +1560,16 @@ Do not add any extra text after the JSON block.
                 # Only replay if we have the target metric
                 if target_metric in record.metrics:
                     val = record.metrics[target_metric]
-                    self.evolution_agent.record_metric(val)
-                    # Safe update: only math state, no side effects
-                    self.evolution_agent.team_state.update_all_depths()
+                    # Replay full iteration record
+                    self.evolution_agent.record_iteration(
+                        iteration=record.iteration,
+                        metric=val,
+                        code=record.code,
+                        approach=record.approach,
+                        contributing_agents=[m.title for m in self.team_members], # Approximation
+                        reflection_text=record.reflection,
+                        reflection_obj=None # We don't have the obj easily available here
+                    )
             
             # Update context builder with restored state
             coverage, gaps = self.evolution_agent.get_coverage_and_gaps()
@@ -1616,7 +1582,7 @@ Do not add any extra text after the JSON block.
         target_metric: str,
         minimize: bool,
     ) -> bool:
-        """Check if evolution is needed using EvolutionAgent"""
+        """Check if evolution is needed using GroundedEvolutionAgent"""
         if self.evolution_agent is None:
             return False
 
@@ -1624,54 +1590,52 @@ Do not add any extra text after the JSON block.
         if current_val is None:
             return False
 
-        # Record metric for this iteration (Layer 5 math state)
-        self.evolution_agent.record_metric(current_val)
+        # Note: record_iteration is already called in run() loop
+        
+        # Get reflection text from last iteration record if available
+        reflection_text = ""
+        if self.iteration_records:
+             reflection_text = self.iteration_records[-1].reflection
 
-        print("\n🧠 Evolution Agent analyzing team dynamics...")
-        self.evolution_decision = self.evolution_agent.step()
+        print("\n🧠 Grounded Evolution Agent analyzing team dynamics...")
+        
+        self.evolution_decision = self.evolution_agent.step(
+            current_iteration=self.iteration,
+            current_metric=current_val,
+            current_team=self.team_members,
+            reflection_text=reflection_text,
+            reflection_obj=None # Optional
+        )
         decision = self.evolution_decision
 
         # Update ContextBuilder with coverage/gaps for next prompts
         coverage, gaps = self.evolution_agent.get_coverage_and_gaps()
         self.context_builder.set_evolution_state(gaps=gaps, coverage=coverage)
 
-        print(f"   Quality: {decision.quality:.2f}")
-        print(
-            f"   Team size: {decision.debug_info.get('team_size', '?')} "
-            f"(min: {decision.debug_info.get('min_size', '?')}, "
-            f"max: {decision.debug_info.get('max_size', '?')})"
-        )
-        # Show coverage with more detail
-        coverage = decision.debug_info.get('coverage', {})
-        gaps = decision.debug_info.get('gaps', [])
+        print(f"   Confidence: {decision.confidence:.0%}")
+        print(f"   Reasoning: {decision.reasoning}")
+        
+        if decision.debug_info:
+             print(f"   Team size: {decision.debug_info.get('team_size', '?')} (min: {decision.debug_info.get('min_size', '?')}, max: {decision.debug_info.get('max_size', '?')})")
 
-        print(f"   Coverage gaps: {len(gaps)} concepts below threshold (< {self.evolution_agent.gap_threshold:.2f})")
-        if gaps:
-            print("      → Gap details:")
-            for gap in gaps[:5]:
-                cov_val = coverage.get(gap, 0.0)
-                print(f"         • {gap}: coverage = {cov_val:.2f}")
-            if len(gaps) > 5:
-                print(f"         ... and {len(gaps) - 5} more")
+        if decision.agents_to_graduate:
+             print(f"   🎓 Graduating agents: {len(decision.agents_to_graduate)}")
+             for title in decision.agents_to_graduate:
+                 print(f"      - {title}")
 
         if decision.new_agent_specs:
             print(f"   🔔 Proposed new agents: {len(decision.new_agent_specs)}")
             for spec in decision.new_agent_specs:
-                print(f"      - {spec.kind.upper()}: {spec.title}")
-                print(f"        Focus concepts: {', '.join(spec.focus_concepts)}")
-                print(f"        Expertise: {spec.expertise[:100]}{'...' if len(spec.expertise) > 100 else ''}")
+                print(f"      - {spec.get('title', 'Unknown')}")
+                print(f"        Expertise: {spec.get('expertise', 'N/A')}")
 
         if decision.agents_to_delete:
             print(f"   🔔 Proposed deletions: {len(decision.agents_to_delete)}")
             for agent in decision.agents_to_delete:
                 print(f"      - {agent.title}")
 
-        if not decision.new_agent_specs and not decision.agents_to_delete:
-            print("   ℹ️  No evolution needed:")
-            if decision.debug_info.get("note"):
-                print(f"      → {decision.debug_info['note']}")
-            else:
-                print("      → No coverage gaps and no weak overlap detected")
+        if not decision.new_agent_specs and not decision.agents_to_delete and not decision.agents_to_graduate:
+            print("   ℹ️  No evolution needed")
             return False
 
         # Interactive check
@@ -1699,7 +1663,7 @@ Do not add any extra text after the JSON block.
         if modified:
              if "agents_to_add" in modified:
                  kept_titles = {a['title'] for a in modified['agents_to_add']}
-                 decision.new_agent_specs = [s for s in decision.new_agent_specs if s.title in kept_titles]
+                 decision.new_agent_specs = [s for s in decision.new_agent_specs if s['title'] in kept_titles]
                  
              if "agents_to_remove" in modified:
                  kept_names = set(modified['agents_to_remove'])
@@ -1707,7 +1671,7 @@ Do not add any extra text after the JSON block.
                  
              print("   ✅ Evolution proposal modified by user.")
 
-        return bool(decision.new_agent_specs or decision.agents_to_delete)
+        return bool(decision.new_agent_specs or decision.agents_to_delete or decision.agents_to_graduate)
 
     def _evolve_team(self, problem_statement: str, current_metrics: Dict[str, float]):
         """Execute the evolution decision"""
@@ -1718,6 +1682,12 @@ Do not add any extra text after the JSON block.
         decision = self.evolution_decision
         changes_made = []
         
+        # 0. Handle graduations
+        for title in decision.agents_to_graduate:
+            self.evolution_agent.probation_manager.make_permanent(title)
+            print(f"   🎓 Graduated: {title}")
+            changes_made.append(f"🎓 Graduated {title}")
+
         # 1. Handle deletions
         for agent_to_remove in decision.agents_to_delete:
             print(f"   🗑️  Removing agent: {agent_to_remove.title}")
@@ -1728,28 +1698,28 @@ Do not add any extra text after the JSON block.
         # 2. Handle new agents
         for spec in decision.new_agent_specs:
             new_agent = Agent(
-                title=spec.title,
-                expertise=spec.expertise,
+                title=spec['title'],
+                expertise=spec['expertise'],
                 goal=f"optimize {list(current_metrics.keys())[0] if current_metrics else 'metrics'}",
-                role=spec.role
+                role=spec['role']
             )
 
-            # Seed KB using relevant past iterations
-            if self.evolution_agent and self.iteration_records:
-                self.evolution_agent.seed_agent_knowledge(
-                    agent=new_agent,
-                    iteration_records=self.iteration_records,
-                    focus_concepts=spec.focus_concepts
-                )
-
+            # Add to team
             self.team_members.append(new_agent)
-            changes_made.append(f"✅ Added {new_agent.title} ({spec.kind})")
+            
+            # Add to probation
+            current_val = current_metrics.get(list(current_metrics.keys())[0]) if current_metrics else 0.0
+            self.evolution_agent.probation_manager.add_to_probation(
+                new_agent, self.iteration, current_val
+            )
+            
+            changes_made.append(f"✅ Added {new_agent.title} (Probation)")
             
         # Update all_agents list
         self.all_agents = [self.team_lead] + self.team_members
         
-        # Sync new team state to evolution agent
-        self.evolution_agent.update_team(self.team_members)
+        # Sync new team state to evolution agent (if needed, GroundedEvolutionAgent tracks via record_iteration)
+        # self.evolution_agent.update_team(self.team_members) # Not needed for GroundedEvolutionAgent
         
         print("\n🔄 Team Evolution Complete:")
         for change in changes_made:
@@ -1765,9 +1735,11 @@ Do not add any extra text after the JSON block.
         evolution_record = {
             'iteration': self.iteration,
             'decision': {
-                'quality': decision.quality,
-                'new_specs': [str(s) for s in decision.new_agent_specs],
+                'confidence': decision.confidence,
+                'reasoning': decision.reasoning,
+                'new_specs': decision.new_agent_specs,
                 'deletions': [str(a) for a in decision.agents_to_delete],
+                'graduations': decision.agents_to_graduate,
                 'debug': decision.debug_info
             },
             'changes': changes_made,

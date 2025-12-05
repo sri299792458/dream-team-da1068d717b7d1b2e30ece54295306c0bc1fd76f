@@ -421,20 +421,37 @@ New concepts: {', '.join(new_concepts)}
 # ============================================================================
 
 def create_evolution_proposal(
-    evolution_decision,  # EvolutionDecision from evolution_agent
+    evolution_decision,  # EvolutionDecision or GroundedEvolutionDecision
     current_team: List,  # List of Agent objects
 ) -> EvolutionProposal:
     """Convert EvolutionDecision to EvolutionProposal for user review."""
     
     agents_to_add = []
     for spec in evolution_decision.new_agent_specs:
-        agents_to_add.append({
-            "title": spec.title,
-            "expertise": spec.expertise,
-            "role": spec.role,
-            "reason": f"Gap in: {', '.join(spec.focus_concepts)}"
-        })
+        # Handle both object (legacy) and dict (grounded) specs
+        if isinstance(spec, dict):
+            agents_to_add.append({
+                "title": spec.get("title", "Unknown"),
+                "expertise": spec.get("expertise", "N/A"),
+                "role": spec.get("role", "N/A"),
+                "reason": f"Focus: {', '.join(spec.get('focus_concepts', []))}"
+            })
+        else:
+            agents_to_add.append({
+                "title": spec.title,
+                "expertise": spec.expertise,
+                "role": spec.role,
+                "reason": f"Gap in: {', '.join(spec.focus_concepts)}"
+            })
     
+    # Handle graduations (if present)
+    if hasattr(evolution_decision, "agents_to_graduate") and evolution_decision.agents_to_graduate:
+        for title in evolution_decision.agents_to_graduate:
+            # We treat graduations as "additions" to permanent status in the UI for now, 
+            # or just list them in the reason since they aren't new agents.
+            # Better: Append to reason.
+            pass
+
     agents_to_remove = [
         getattr(a, 'title', str(a)) 
         for a in evolution_decision.agents_to_delete
@@ -448,15 +465,17 @@ def create_evolution_proposal(
     coverage_gaps = evolution_decision.debug_info.get('gaps', [])
     
     # Compute confidence based on quality and gap severity
-    quality = evolution_decision.quality
+    quality = getattr(evolution_decision, 'quality', getattr(evolution_decision, 'confidence', 0.5))
     num_gaps = len(coverage_gaps)
     confidence = min(0.9, 0.5 + (quality - 0.5) * 0.4 - num_gaps * 0.05)
+    
+    reason = getattr(evolution_decision, 'reasoning', f"Quality={quality:.2f}, {num_gaps} coverage gaps")
     
     return EvolutionProposal(
         agents_to_remove=agents_to_remove,
         agents_to_add=agents_to_add,
         coverage_gaps=coverage_gaps,
         current_team=current_team_names,
-        reason=f"Quality={quality:.2f}, {num_gaps} coverage gaps",
+        reason=reason,
         confidence=max(0.1, confidence)
     )
