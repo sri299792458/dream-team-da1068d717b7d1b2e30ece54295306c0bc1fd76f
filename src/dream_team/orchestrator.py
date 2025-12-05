@@ -1362,7 +1362,7 @@ Output ONLY the complete Python code in ```python``` blocks.
         if len(self.reflection_memory.reflections) > 0:
             past_context = "\n## Context from Past Iterations\n\n"
             # Show summary of recent iterations (last 2-3)
-            recent_reflections = self.reflection_memory.reflections[-3:]
+            recent_reflections = self.reflection_memory.reflections[-10:]
             for ref in recent_reflections:
                 past_context += f"### Iteration {ref.iteration}\n"
                 if ref.key_insights:
@@ -1377,7 +1377,7 @@ Output ONLY the complete Python code in ```python``` blocks.
 
             # Also show recent metric trajectory for context
             past_context += "**Recent Metric Trajectory (per-iteration target metric):**\n"
-            for record in self.iteration_records[-3:]:
+            for record in self.iteration_records[-10:]:
                 if self.target_metric in record.metrics:
                     past_context += (
                         f"- Iteration {record.iteration}: "
