@@ -137,6 +137,27 @@ class GroundedConcept:
             return 0.5  # Unknown
         return self.success_count / total
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "source": self.source,
+            "importance": self.importance,
+            "last_used_iteration": self.last_used_iteration,
+            "success_count": self.success_count,
+            "failure_count": self.failure_count
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> GroundedConcept:
+        return cls(
+            name=data["name"],
+            source=data["source"],
+            importance=data["importance"],
+            last_used_iteration=data.get("last_used_iteration"),
+            success_count=data.get("success_count", 0),
+            failure_count=data.get("failure_count", 0)
+        )
+
 
 class GroundedConceptSpace:
     """
@@ -236,6 +257,23 @@ Output JSON array only:
         """Unfreeze concept space."""
         self._locked = False
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "concepts": {k: v.to_dict() for k, v in self.concepts.items()},
+            "locked": self._locked
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> GroundedConceptSpace:
+        space = cls()
+        space._locked = data.get("locked", False)
+        if "concepts" in data:
+            space.concepts = {
+                k: GroundedConcept.from_dict(v) 
+                for k, v in data["concepts"].items()
+            }
+        return space
+
 
 # ============================================================================
 # ATTRIBUTION: Track which agent actually contributed to improvements
@@ -256,6 +294,27 @@ class Contribution:
         if self.metric_before is None or self.metric_after is None:
             return None
         return self.metric_before - self.metric_after  # Positive = improved (for minimize)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "agent_title": self.agent_title,
+            "iteration": self.iteration,
+            "role": self.role,
+            "techniques_advocated": self.techniques_advocated,
+            "metric_before": self.metric_before,
+            "metric_after": self.metric_after
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Contribution:
+        return cls(
+            agent_title=data["agent_title"],
+            iteration=data["iteration"],
+            role=data["role"],
+            techniques_advocated=data.get("techniques_advocated", []),
+            metric_before=data.get("metric_before"),
+            metric_after=data.get("metric_after")
+        )
 
 
 class ContributionTracker:
@@ -329,6 +388,22 @@ class ContributionTracker:
             if score < threshold
         ]
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "contributions": [c.to_dict() for c in self.contributions],
+            "agent_scores": self.agent_scores
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> ContributionTracker:
+        tracker = cls()
+        tracker.agent_scores = data.get("agent_scores", {})
+        if "contributions" in data:
+            tracker.contributions = [
+                Contribution.from_dict(c) for c in data["contributions"]
+            ]
+        return tracker
+
 
 # ============================================================================
 # PROBATION: New agents must prove their value
@@ -391,6 +466,33 @@ class ProbationaryAgent:
         
         return True, f"Metrics improved and agent contributed {self.contributions} times"
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "agent_title": getattr(self.agent, 'title', str(self.agent)), # Store title only
+            "status": self.status.value,
+            "added_iteration": self.added_iteration,
+            "metric_at_addition": self.metric_at_addition,
+            "metrics_during_probation": self.metrics_during_probation,
+            "probation_length": self.probation_length,
+            "contributions": self.contributions
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], agent_map: Dict[str, Any]) -> ProbationaryAgent:
+        # We need to reconnect to the actual agent object
+        title = data["agent_title"]
+        agent = agent_map.get(title) # Might be None if agent was removed, but shouldn't happen for active probation
+        
+        return cls(
+            agent=agent,
+            status=AgentStatus(data["status"]),
+            added_iteration=data["added_iteration"],
+            metric_at_addition=data["metric_at_addition"],
+            metrics_during_probation=data.get("metrics_during_probation", []),
+            probation_length=data.get("probation_length", 3),
+            contributions=data.get("contributions", 0)
+        )
+
 
 class ProbationManager:
     """Manage probationary agents."""
@@ -450,6 +552,22 @@ class ProbationManager:
                 should_keep, reason = prob_agent.evaluate(minimize)
                 results.append((title, should_keep, reason))
         return results
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "probation_length": self.probation_length,
+            "agents": {k: v.to_dict() for k, v in self.agents.items()}
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], agent_map: Dict[str, Any]) -> ProbationManager:
+        manager = cls(probation_length=data.get("probation_length", 3))
+        if "agents" in data:
+            manager.agents = {
+                k: ProbationaryAgent.from_dict(v, agent_map)
+                for k, v in data["agents"].items()
+            }
+        return manager
 
 
 # ============================================================================
@@ -813,3 +931,45 @@ class GroundedEvolutionAgent:
         coverage = {c.name: c.importance for c in self.concept_space.concepts.values()}
         gaps = self.concept_space.get_underexplored_concepts()
         return coverage, gaps
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize state."""
+        return {
+            "min_team_size": self.min_team_size,
+            "max_team_size": self.max_team_size,
+            "evolution_cooldown": self.evolution_cooldown,
+            "concept_space": self.concept_space.to_dict(),
+            "contribution_tracker": self.contribution_tracker.to_dict(),
+            "probation_manager": self.probation_manager.to_dict(),
+            "metric_history": self.metric_history,
+            "minimize_metric": self.minimize_metric,
+            "last_evolution_iteration": self.last_evolution_iteration,
+            "initialized": self._initialized
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], llm: Any, agent_map: Dict[str, Any]) -> GroundedEvolutionAgent:
+        """Restore state."""
+        agent = cls(
+            llm=llm,
+            min_team_size=data.get("min_team_size", 3),
+            max_team_size=data.get("max_team_size", 5),
+            probation_length=data.get("probation_manager", {}).get("probation_length", 3),
+            evolution_cooldown=data.get("evolution_cooldown", 2)
+        )
+        
+        agent.metric_history = data.get("metric_history", [])
+        agent.minimize_metric = data.get("minimize_metric", True)
+        agent.last_evolution_iteration = data.get("last_evolution_iteration", 0)
+        agent._initialized = data.get("initialized", False)
+        
+        if "concept_space" in data:
+            agent.concept_space = GroundedConceptSpace.from_dict(data["concept_space"])
+            
+        if "contribution_tracker" in data:
+            agent.contribution_tracker = ContributionTracker.from_dict(data["contribution_tracker"])
+            
+        if "probation_manager" in data:
+            agent.probation_manager = ProbationManager.from_dict(data["probation_manager"], agent_map)
+            
+        return agent
