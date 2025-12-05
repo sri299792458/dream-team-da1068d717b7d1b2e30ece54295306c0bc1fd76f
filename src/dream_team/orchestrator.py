@@ -763,10 +763,10 @@ Decide on the next step to improve {self.target_metric}.
         """Have the coding agent write code to implement the team plan/approach."""
         print(f"💻 {self.coding_agent.title} implementing approach...\n")
 
-        # Column schemas from current data_context (including any new features from previous iterations)
+        # Column schemas from current data_context
         schema_info = self._format_column_schemas()
 
-        # High-level plan + schema context for the coding agent
+        # High-level plan + schema context
         impl_context = self.context_builder.for_coding(
             coding_agent=self.coding_agent,
             team_plan=approach,
@@ -774,27 +774,17 @@ Decide on the next step to improve {self.target_metric}.
             column_schemas=schema_info
         )
 
-        # Data variables available in the executor (data-only, no helper functions)
         data_keys = list(self.executor.data_context.keys())
-
-        # Project-specific base/raw tables that must not be modified in-place
         base_table_names = {"batches_train", "batches_test", "products", "sites", "regions"}
         base_tables = [name for name in data_keys if name in base_table_names]
-
-        # Everything else in data_context is treated as modeling / derived tables
         modeling_tables = [name for name in data_keys if name not in base_table_names]
 
-        base_tables_block = (
-            "\n".join(f"- {name}" for name in base_tables)
-            if base_tables
-            else "  (none)"
-        )
-        modeling_tables_block = (
-            "\n".join(f"- {name}" for name in modeling_tables)
-            if modeling_tables
-            else "  (none yet — you may create a modeling dataframe such as `train_df`.)"
-        )
+        base_tables_block = "\n".join(f"- {name}" for name in base_tables) if base_tables else "  (none)"
+        modeling_tables_block = "\n".join(f"- {name}" for name in modeling_tables) if modeling_tables else "  (none yet)"
 
+        # --- KEY CHANGE: Added explicit column checking logic ---
+        # We explicitly warn the agent about what columns already exist to prevent re-creation errors.
+        
         task = f"""Implement the team's plan.
 
 {impl_context}
@@ -809,36 +799,28 @@ The following **data variables** already exist in the environment (provided by t
 - Modeling / derived tables (you MAY add new feature columns to these):
 {modeling_tables_block}
 
-You must operate only on these real data objects. Do NOT create any mock or dummy data.
+## CRITICAL: STATELESSNESS & PERSISTENCE
+1. **Logic is Stateless:** Variables, functions, and imports from previous iterations are GONE. 
+   - You must **RE-DEFINE** all helper functions (e.g., `prepare_data`), lists (e.g., `cat_features`), and objects (e.g., `kf = KFold(...)`) inside this script.
+2. **Data is Persistent:** The `train_df` object persists between runs.
+   - If a previous run failed halfway, `train_df` might **already contain** the columns you are trying to create.
 
 ## RULES
 
-1. Do NOT modify the base/raw tables in-place
-   (no new columns or row changes on: {", ".join(base_tables) if base_tables else "none"}).
-   If you need derived data, create new DataFrames or work on modeling tables instead.
-2. You MAY add new feature columns to modeling tables
-   (e.g. `train_df["new_feature"] = ...`), and these features will persist into future iterations.
-3. Use EXACT column names from the schemas above.
-4. Import ALL libraries you need at the top of the code block
-   (e.g., `import pandas as pd`, `import numpy as np`, `import lightgbm as lgb`).
-5. Define ALL helper functions you need (e.g., `prepare_data`, `run_cv_experiment`)
-   inside THIS code block.
-   Do NOT assume that helper functions from previous iterations exist.
-6. Use GPU when training models where the library supports it
-   (e.g., LightGBM with `device="gpu"`).
-7. Compute and print the target metric: {self.target_metric}.
-8. Save expensive models to disk when appropriate (e.g., `joblib.dump`, `torch.save`).
-9. Suppress noisy warnings (e.g., `warnings.filterwarnings("ignore")`).
-10. Keep the computation reasonable: design training/evaluation so that a single run of this script
-   can finish within an hour. Avoid very large hyperparameter sweeps, nested CV,
-   or anything that obviously requires hours of compute.
+1. **Self-Contained Logic:** Import ALL libraries and define ALL functions/classes you need inside this block. Do not rely on "globals" from previous runs.
+2. **Idempotency (Sanitize Inputs):** Before creating a new feature (e.g., "thermal_index"), check if it exists in the dataframe.
+   - **MANDATORY PATTERN:** Use `df.drop(columns=['my_new_col'], errors='ignore')` BEFORE creating 'my_new_col'. 
+   - This prevents `MergeError` or creating `col_x` and `col_y` duplicates.
+3. **Do NOT modify Base Tables:** {", ".join(base_tables) if base_tables else "none"}.
+4. **Use Explicit Column Renaming:** When aggregating, renaming columns explicitly (e.g., `df.columns = ['new_name']`) is safer than relying on auto-renaming.
+5. **Use GPU:** Use `device="gpu"` for LightGBM/XGBoost/CatBoost.
+6. **Compute Metric:** Print the target metric: {self.target_metric}.
+7. **Timeout:** Keep execution under 1 hour.
 
 ## OUTPUT
 
 Output ONLY executable Python code inside a ```python``` code block.
 """
-
-        # Single-step code generation with the full task (including rules) passed through
 
         meeting = IndividualMeeting(
             save_dir=str(self.results_dir / 'meetings'),
